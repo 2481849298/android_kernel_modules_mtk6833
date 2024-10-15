@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/kobject.h>
 #include <linux/threads.h>
+#include <linux/cgroup-defs.h>
 #include <linux/sched/stat.h>
 #include <linux/sched/nohz.h>
 #include <linux/sched/topology.h>
@@ -27,10 +28,11 @@
 #include <trace/hooks/sched.h>
 #include "sched.h"
 #include "power_diag.h"
-
+#include "../../../../kernel/workqueue_internal.h"
+#if 0
 #define CREATE_TRACE_POINTS
 #include "trace_powerd.h"
-
+#endif
 #define power_diag_tag "[POWER_DIAG]"
 #define power_diag_info(fmt, args...) pr_info(power_diag_tag fmt, ##args)
 #define power_diag_err(fmt, args...) pr_err(power_diag_tag fmt, ##args)
@@ -68,14 +70,36 @@ err_found:
 	return 0;
 }
 
+static inline struct kthread_cp *to_kthread_cp(struct task_struct *k)
+{
+	WARN_ON(!(k->flags & PF_KTHREAD));
+	return (__force void *)k->set_child_tid;
+}
+void *kthread_data_cp(struct task_struct *task)
+{
+	return to_kthread_cp(task)->data;
+}
+static inline struct worker* get_worker(struct task_struct *p)
+{
+	struct worker *worker = NULL;
+	if (p && (p->flags & PF_WQ_WORKER))
+		worker = kthread_data_cp(p);
+	return worker;
+}
+
 static void print_heavy_loads_tasks()
 {
 	int i = 0;
 	for (; i < NUM_PRINT_HEAVY_LOAD_TASK; i++) {
 		if (!cpustats_saved[i].pwr)
 			break;
-		power_diag_info("%s\t%u\t%u\t%u\t%u\t%u\n", cpustats_saved[i].comm, cpustats_saved[i].pid,
-			cpustats_saved[i].tgid, cpustats_saved[i].pwr, cpustats_saved[i].lcore_pwr, cpustats_saved[i].r_time);
+		if (cpustats_saved[i].worker.kworker)
+			power_diag_info("%s\t%u\t%u\t%u\t%u\t%u\t%ps(cf)\t%ps(lf)\n", cpustats_saved[i].comm, cpustats_saved[i].pid,
+				cpustats_saved[i].tgid, cpustats_saved[i].pwr, cpustats_saved[i].lcore_pwr, cpustats_saved[i].r_time,
+				cpustats_saved[i].worker.current_func, cpustats_saved[i].worker.last_func);
+		else
+			power_diag_info("%s\t%u\t%u\t%u\t%u\t%u\n", cpustats_saved[i].comm, cpustats_saved[i].pid,
+				cpustats_saved[i].tgid, cpustats_saved[i].pwr, cpustats_saved[i].lcore_pwr, cpustats_saved[i].r_time);
 	}
 }
 
@@ -125,16 +149,18 @@ static void task_power_stats()
 				continue;
 			if (ts->begin >= begin && ts->end <= end) {
 				struct task_stat *as = cpustats_saved + ts->pid;
-				if (as->pwr == 0)
+				if (as->pwr == 0) {
 					memcpy(as->comm, ts->comm, TASK_COMM_LEN);
+					as->pid = ts->pid;
+					as->tgid = ts->tgid;
+					memcpy(&as->worker, &ts->worker, sizeof(struct kworker_stat));
+				}
 				/* 4 ms each tick */
 				tmp_pwr = get_power(i, ts->freq) * jiffies_to_msecs(r_time);
 
 				if (ts->l_core)
 					as->lcore_pwr += tmp_pwr;
 				as->pwr += tmp_pwr;
-				as->pid = ts->pid;
-				as->tgid = ts->tgid;
 				as->r_time += jiffies_to_msecs(r_time);
 			}
 		}
@@ -161,6 +187,8 @@ static void print_active_wakeup_sources()
 	memset(ws_msg, 0, sizeof(ws_msg));
 	pm_get_active_wakeup_sources(ws_msg, MAX_ACTIVE_WAKEUP_SOUCE_LEN);
 	power_diag_info("%s\n", ws_msg);
+	if (strstr(ws_msg, "cmdq") && !strstr(ws_msg, "crtc0"))
+		cmdq_dump_usage();
 }
 static void debug_power_timer_func(struct timer_list *unused)
 {
@@ -174,9 +202,8 @@ static void debug_power_timer_func(struct timer_list *unused)
 		c_cap = arch_scale_cpu_capacity(cpu);
 		c_util = cfs_util(cpu);
 		cpu_freq = cpufreq_quick_get(cpu) / 1000;
-		power_diag_info("cpu_info(%d): %dMhz\t%d(c_util)\t%d(all)\t%d(cap)\n",
-			cpu, cpu_freq, c_util,
-			schedutil_cpu_util(cpu, c_cap, c_util, FREQUENCY_UTIL, current), c_cap);
+		power_diag_info("cpu_info(%d): %dMhz\t%d(c_util)\t%d(cap)\n",
+			cpu, cpu_freq, c_util, c_cap);
 	}
 
 	task_power_stats();
@@ -264,7 +291,7 @@ static struct attribute * power_debug[] = {
 static const struct attribute_group power_debug_attr_group = {
 	.attrs = power_debug,
 };
-
+#if 0
 static void parse_sched_setaffinity(void *ignore, struct task_struct *p,
 	const struct cpumask *in_mask, int *retval) {
 	int cpu = cpumask_first(in_mask);
@@ -277,13 +304,13 @@ static void parse_sched_setuclamp(void *ignore, struct task_struct *p,
 	if (clamp_id == UCLAMP_MIN)
 		trace_sched_setuclamp(p, uclamp_val);
 }
-
+#endif
 static void account_task_time_cp(void *data, struct task_struct *p, struct rq *rq, int user_tick) {
 	int idx;
 	struct kernel_task_cpustat_cp *kstat;
 	struct task_cpustat_cp *s;
 	int cpu = task_cpu(p);
-
+	struct worker *t_kworker;
 	if (p == rq->idle)
 		return;
 
@@ -298,6 +325,14 @@ static void account_task_time_cp(void *data, struct task_struct *p, struct rq *r
 	s->freq = cpufreq_quick_get(cpu);
 	s->begin = jiffies - cputime_one_jiffy;
 	s->end = jiffies;
+	s->worker.kworker = p->flags & PF_WQ_WORKER;
+	if (s->worker.kworker) {
+		t_kworker = get_worker(p);
+		if (t_kworker) {
+			s->worker.current_func = t_kworker->current_func;
+			s->worker.last_func = t_kworker->last_func;
+		}
+	}
 	memcpy(s->comm, p->comm, TASK_COMM_LEN);
 	kstat->idx = idx + 1;
 }
@@ -305,16 +340,19 @@ static void account_task_time_cp(void *data, struct task_struct *p, struct rq *r
 static int register_vendor_hooks()
 {
 	int rc = 0;
+#if 0
 	rc = register_trace_android_rvh_sched_setaffinity(parse_sched_setaffinity, NULL);
 	if (rc != 0) {
 		power_diag_err("register_trace_android_rvh_sched_setaffinity failed! rc=%d\n",rc);
 		return rc;
 	}
+
 	rc = register_trace_android_vh_setscheduler_uclamp(parse_sched_setuclamp, NULL);
 	if (rc != 0) {
 		power_diag_err("register_trace_android_vh_setscheduler_uclamp failed! rc=%d\n",rc);
 		return rc;
 	}
+#endif
 	rc = register_trace_android_vh_account_task_time(account_task_time_cp, NULL);
 	if (rc != 0) {
 		power_diag_err("register_trace_android_rvh_sched_setaffinity failed! rc=%d\n",rc);

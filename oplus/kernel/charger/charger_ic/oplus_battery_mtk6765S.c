@@ -35,6 +35,13 @@
 #include <linux/reboot.h>
 #include <linux/alarmtimer.h>
 #include <mtk_musb.h>
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#ifndef CONFIG_TCPC_CLASS
+#include <linux/regmap.h>
+#include <linux/of_platform.h>
+#include <linux/mfd/mt6397/core.h>/* PMIC MFD core header */
+#endif
+#endif
 
 #include <mt-plat/mtk_boot.h>
 #include <tcpm.h>
@@ -48,6 +55,19 @@
 #include "op_charge.h"
 #include "../../../misc/mediatek/typec/tcpc/inc/tcpci.h"
 #include <linux/iio/consumer.h>
+#ifndef CONFIG_TCPC_CLASS
+#include "../../../misc/mediatek/extcon/extcon-mtk-usb.h"
+#endif
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#ifndef CONFIG_TCPC_CLASS
+#define MT6357_VS1_ANA_CON2 0x1736
+#define PMIC_RG_VS1_MODESET_MASK 0x1
+#define PMIC_RG_VS1_MODESET_SHIFT 8
+#define FORCE_PWM 1
+#define AUTO_MODE 0
+#endif
+#endif
 
 extern void mt_usb_connect_v1(void);
 extern void mt_usb_disconnect_v1(void);
@@ -1876,21 +1896,34 @@ static int psy_charger_set_property(struct power_supply *psy,
 	}
 	_wake_up_charger(info);
 	charger_type = g_oplus_chip->chg_ops->get_charger_type();
-
+#ifndef CONFIG_TCPC_CLASS
+	if (charger_type == POWER_SUPPLY_TYPE_USB_CDP
+		|| charger_type == POWER_SUPPLY_TYPE_USB) {
+		oplus_usb_extcon_set_role(DUAL_PROP_DR_DEVICE);
+	} else {
+		oplus_usb_extcon_set_role(DUAL_PROP_DR_NONE);
+	}
+#else
 	if (charger_type == POWER_SUPPLY_TYPE_USB_CDP
 		|| charger_type == POWER_SUPPLY_TYPE_USB) {
 		mt_usb_connect_v1();
 	} else {
 		mt_usb_disconnect_v1();
 	}
-
+#endif
 	return 0;
 }
 
 static void mtk_charger_external_power_changed(struct power_supply *psy)
 {
 	struct mtk_charger *info;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	union power_supply_propval prop = { 0 };
+	union power_supply_propval prop2 = { 0 };
+	union power_supply_propval type_prop = { 0 };
+#else
 	union power_supply_propval prop, prop2, type_prop;
+#endif
 	struct power_supply *chg_psy = NULL;
 	int ret;
 
@@ -1997,6 +2030,10 @@ static int notify_adapter_event(struct notifier_block *notifier,
 		/* type C is ready */
 		_wake_up_charger(pinfo);
 		break;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	default:
+		break;
+#endif
 	}
 	return NOTIFY_DONE;
 }
@@ -2053,6 +2090,11 @@ int mt_power_supply_type_check(void)
 	chg_debug("mt_power_supply_type_check-----2---------\
 		charger_type = %d, charger_type_final = %d, g_chr_type = %d\r\n",
 		charger_type, charger_type_final, g_chr_type);
+	if (g_oplus_chip) {
+		if ((g_oplus_chip->charger_type != charger_type) && g_oplus_chip->usb_psy)
+			power_supply_changed(g_oplus_chip->usb_psy);
+	}
+
 	return charger_type;
 }
 #endif /*ODM_WT_EDIT*/
@@ -2089,6 +2131,12 @@ int mt_vadc_read(int times, int Channel)
 static void set_usbswitch_to_rxtx(struct oplus_chg_chip *chip)
 {
 	int ret = 0;
+
+	if ((chip == NULL) || (chip->normalchg_gpio.chargerid_switch_gpio <= 0)) {
+		chg_err("chargerid_switch_gpio not exist\n");
+		return;
+	}
+
 	gpio_direction_output(chip->normalchg_gpio.chargerid_switch_gpio, 1);
 	ret = pinctrl_select_state(chip->normalchg_gpio.pinctrl, chip->normalchg_gpio.charger_gpio_as_output2);
 	if (ret < 0) {
@@ -2100,6 +2148,12 @@ static void set_usbswitch_to_rxtx(struct oplus_chg_chip *chip)
 static void set_usbswitch_to_dpdm(struct oplus_chg_chip *chip)
 {
 	int ret = 0;
+
+	if ((chip == NULL) || (chip->normalchg_gpio.chargerid_switch_gpio <= 0)) {
+		chg_err("chargerid_switch_gpio not exist\n");
+		return;
+	}
+
 	gpio_direction_output(chip->normalchg_gpio.chargerid_switch_gpio, 0);
 	ret = pinctrl_select_state(chip->normalchg_gpio.pinctrl, chip->normalchg_gpio.charger_gpio_as_output1);
 	if (ret < 0) {
@@ -2161,10 +2215,15 @@ void mt_set_chargerid_switch_val(int value)
 int mt_get_chargerid_switch_val(void)
 {
 	int gpio_status = 0;
-	if(NULL == g_oplus_chip)
+
+	if((NULL == g_oplus_chip) || (g_oplus_chip->normalchg_gpio.chargerid_switch_gpio <= 0)) {
+		chg_err("chargerid_switch_gpio not exist\n");
 		return 0;
+	}
+
 	if(is_support_chargerid_check() == false)
 		return 0;
+
 	gpio_status = gpio_get_value(g_oplus_chip->normalchg_gpio.chargerid_switch_gpio);
 
 	chg_debug("mt_get_chargerid_switch_val:%d\n", gpio_status);
@@ -4425,6 +4484,9 @@ static enum power_supply_property battery_properties[] = {
 #endif /*CONFIG_OPLUS_SHORT_USERSPACE*/
 #endif
 	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
+#endif
 };
 
 
@@ -4699,15 +4761,6 @@ void mtk_pdc_set_max_watt(struct mtk_charger *info, int watt)
 	info->pdc.pdc_max_watt_setting = watt;
 }
 
-bool is_meta_mode(void)
-{
-        if (get_boot_mode() == META_BOOT) {
-                return true;
-        } else {
-                return false;
-        }
-}
-
 void oplus_mt_usb_connect(void)
 {
 	return;
@@ -4733,8 +4786,9 @@ void oplus_set_typec_cc_open(void)
 {
 	if (pinfo == NULL || pinfo->tcpc == NULL)
 		return;
-
+#ifdef CONFIG_TCPC_CLASS
 	tcpm_typec_disable_function(pinfo->tcpc, true);
+#endif /* CONFIG_TCPC_CLASS */
 	chg_err(" !\n");
 }
 EXPORT_SYMBOL(oplus_set_typec_cc_open);
@@ -4743,8 +4797,9 @@ void oplus_usbtemp_recover_cc_open(void)
 {
 	if (pinfo == NULL || pinfo->tcpc == NULL)
 		return;
-
+#ifdef CONFIG_TCPC_CLASS
 	tcpm_typec_disable_function(pinfo->tcpc, false);
+#endif /* CONFIG_TCPC_CLASS */
 	chg_err(" !\n");
 }
 #endif /* OPLUS_FEATURE_CHG_BASIC */
@@ -4811,6 +4866,130 @@ struct oplus_chg_operations  oplus_chg_default_ops = {
 	.oplus_usbtemp_monitor_condition = oplus_usbtemp_condition,
 	.set_typec_cc_open = oplus_set_typec_cc_open,
 };
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#ifndef CONFIG_TCPC_CLASS
+struct mt6397_chip *pmic_chip;
+
+void pmic_set_register_value(struct regmap *map,
+	unsigned int addr,
+	unsigned int mask,
+	unsigned int shift,
+	unsigned int val)
+{
+	regmap_update_bits(map,
+		addr,
+		mask << shift,
+		val << shift);
+}
+
+static ssize_t gsm_pmic_pwm_node_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
+{
+	char upmu_vs1_mode[4];
+	ssize_t ret = 1;
+
+	if (NULL == buf) {
+		chg_err("gsm_pmic_pwm_node_write parameter error.\n");
+		return -EFAULT;
+	}
+
+	if (copy_from_user(&upmu_vs1_mode, buf, count)) {
+		chg_err("gsm_pmic_pwm_node_write copy_from_user error.\n");
+		return -EFAULT;
+	}
+
+	if (strncmp(upmu_vs1_mode, "1", 1) == 0) {
+		pmic_set_register_value(pmic_chip->regmap,
+			MT6357_VS1_ANA_CON2,
+			PMIC_RG_VS1_MODESET_MASK,
+			PMIC_RG_VS1_MODESET_SHIFT,
+			FORCE_PWM);
+	} else if (strncmp(upmu_vs1_mode, "0", 1) == 0) {
+		pmic_set_register_value(pmic_chip->regmap,
+			MT6357_VS1_ANA_CON2,
+			PMIC_RG_VS1_MODESET_MASK,
+			PMIC_RG_VS1_MODESET_SHIFT,
+			AUTO_MODE);
+	} else
+		chg_err("gsm_pmic_pwm_node_write parameter error.\n");
+
+	return ret;
+}
+
+static ssize_t gsm_pmic_pwm_node_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+{
+	return count;
+}
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+static const struct file_operations gsm_pmic_pwm_ctrl =
+{
+	.write = gsm_pmic_pwm_node_write,
+	.read = gsm_pmic_pwm_node_read,
+};
+#else
+static const struct proc_ops gsm_pmic_pwm_ctrl =
+{
+	.proc_write = gsm_pmic_pwm_node_write,
+	.proc_read = gsm_pmic_pwm_node_read,
+	.proc_lseek = seq_lseek,
+};
+#endif
+
+static void init_proc_upmu_vs1_config(void)
+{
+	if (!proc_create("gsm_pmic_pwm", S_IWUSR | S_IWGRP | S_IWOTH,
+		NULL, &gsm_pmic_pwm_ctrl)) {
+		chg_err("proc_create gsm_pmic_pwm fail!\n");
+	}
+}
+
+static int oplus_pmic_chip_init()
+{
+	static struct mtk_charger *pinfo;
+	int ret = 0;
+	struct device_node *pmic_node;
+	struct platform_device *pmic_pdev;
+	struct power_supply *psy;
+
+	if (pinfo == NULL) {
+		psy = power_supply_get_by_name("mtk-master-charger");
+		if (psy == NULL) {
+			chr_err("[%s]psy is not rdy\n", __func__);
+			return -1;
+		}
+
+		pinfo = (struct mtk_charger *)power_supply_get_drvdata(psy);
+		if (pinfo == NULL) {
+			chr_err("[%s]mtk_gauge is not rdy\n", __func__);
+			return -1;
+		}
+	}
+
+	pmic_node = of_parse_phandle(pinfo->pdev->dev.of_node, "pmic", 0);
+	if (!pmic_node) {
+		chr_err("get pmic_node fail\n");
+		return -1;
+	}
+
+	pmic_pdev = of_find_device_by_node(pmic_node);
+	if (!pmic_pdev) {
+		chr_err("get pmic_pdev fail\n");
+		return -1;
+	}
+
+	pmic_chip = dev_get_drvdata(&(pmic_pdev->dev));
+	if (!pmic_chip) {
+		chr_err("get chip fail\n");
+		return -1;
+	}
+
+	init_proc_upmu_vs1_config();
+
+	return ret;
+}
+#endif
+#endif
 
 static int oplus_charger_probe(struct platform_device *pdev)
 {
@@ -5019,6 +5198,12 @@ static int oplus_charger_probe(struct platform_device *pdev)
 		ret = device_create_file(&oplus_chip->batt_psy->dev, &dev_attr_StopCharging_Test);/* stop charging */
 		ret = device_create_file(&oplus_chip->batt_psy->dev, &dev_attr_StartCharging_Test);
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#ifndef CONFIG_TCPC_CLASS
+	oplus_pmic_chip_init();
+#endif
+#endif
 
 	return 0;
 }

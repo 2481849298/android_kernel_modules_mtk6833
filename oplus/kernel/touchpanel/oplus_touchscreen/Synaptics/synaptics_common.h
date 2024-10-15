@@ -15,6 +15,7 @@
 #include <linux/time.h>
 
 #include "../touchpanel_common.h"
+#include "../touchpanel_healthinfo.h"
 
 #include "synaptics_firmware_v2.h"
 #include <soc/oplus/system/oplus_project.h>

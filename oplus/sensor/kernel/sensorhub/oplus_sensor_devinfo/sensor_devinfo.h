@@ -72,8 +72,21 @@ typedef struct {/*new struct*/
 	int nReserve[14];
 } sensor_cali_file_v2_t;
 
+enum panel_id{
+	SAMSUNG = 1,
+	BOE,
+	TIANMA,
+	NT36672C,
+	HX83112F,
+	TM,
+	P_3,
+	PANEL_NUM
+};
 
-
+struct panel_node {
+	enum panel_id id;
+	char *lcm_name;
+};
 
 enum {
 	OPLUS_ACTION_RW_REGISTER = 110,
@@ -91,6 +104,22 @@ enum sensor_mode {
 	PS_NORMAL_MODE,
 	GSENSOR_FACTORY_MODE,
 	GSENSOR_NORMAL_MODE,
+	REAR_CCT_FACTORY_MODE,
+	REAR_CCT_NORMAL_MODE,
+	CCT_FACTORY_MODE,
+	CCT_NORMAL_MODE,
+	CCT_CLOCK_MODE,
+	PS_LP_MODE,
+	PS_HP_MODE,
+	HINGE_DETECT_FACTORY_MODE,
+	HINGE_DETECT_NORMAL_MODE,
+	REAR_SPECTRUM_NORMAL_MODE,
+	REAR_SPECTRUM_FACTORY_512_GAIN,
+	REAR_SPECTRUM_FACTORY_2048_GAIN,
+	REAR_PS_FACTORY_MODE,
+	REAR_PS_NORMAL_MODE,
+	LEAR_CALI_MODE,
+	LEAK_CALI_NORMAL_MODE,
 };
 
 enum light_sensor_type {
@@ -99,6 +128,10 @@ enum light_sensor_type {
 	NORMAL_NEED_COMPENSATION,
 };
 
+enum {
+	CCT_NORMAL = 0x01,
+	CCT_WISE = 0x02,
+};
 
 enum sensor_id {
 	OPLUS_ACCEL = 1,

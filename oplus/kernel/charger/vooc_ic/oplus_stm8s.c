@@ -29,7 +29,9 @@
 
 //#include <mt-plat/battery_meter.h>
 #include <linux/module.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
+#endif
 
 #else
 #include <linux/i2c.h>
@@ -48,7 +50,9 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
+#endif
 #endif
 #include "oplus_vooc_fw.h"
 
@@ -608,6 +612,7 @@ struct oplus_vooc_operations oplus_stm8s_ops = {
 
 static void register_vooc_devinfo(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret = 0;
 	char *version;
 	char *manufacture;
@@ -619,6 +624,7 @@ static void register_vooc_devinfo(void)
 	if (ret) {
 		chg_err(" fail\n");
 	}
+#endif
 }
 
 static void stm8s_shutdown(struct i2c_client *client)

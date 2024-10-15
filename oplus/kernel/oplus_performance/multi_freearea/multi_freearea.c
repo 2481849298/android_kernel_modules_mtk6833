@@ -209,7 +209,7 @@ int page_to_flc(struct page *page)
             return flc;
     }
 
-    return flc;
+        return FREE_AREA_COUNTS - 1;
 }
 
 void ajust_zone_label(struct zone *zone)

@@ -141,7 +141,7 @@ static int oplus_check_execveat_perm( )
 		oplus_report_execveat(absolute_path, "execve_report");
 	} else {
                 oplus_report_execveat(absolute_path, "execve_block");
-		need_block = 1;
+		need_block = -1;
                 goto out_free;
 	}
 out_free:

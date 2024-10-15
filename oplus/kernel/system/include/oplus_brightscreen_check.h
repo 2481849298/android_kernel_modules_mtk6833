@@ -8,4 +8,5 @@
 
 int bright_screen_timer_restart(void);
 
-#endif /*_OPLUS_BRIGHTSCREEN_CHECK_H_*/
+#endif
+

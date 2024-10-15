@@ -3,7 +3,4 @@
 
 obj-y := focaltech_fp.o
 
-focaltech_fp-objs 	:= ff_core.o ff_spi.o
-
-
-
+focaltech_fp-objs 	:= ff_core.o

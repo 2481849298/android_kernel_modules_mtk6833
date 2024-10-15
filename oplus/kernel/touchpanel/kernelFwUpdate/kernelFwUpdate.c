@@ -94,7 +94,7 @@ static int __init kernel_fw_update_init(void)
         ret = sysfs_create_group(&fw_update_dev->kobj, &fw_update_attr_group);
         if(ret < 0) {
             FW_UPDATE_INFO("kernel_fw_update:sysfs_create_group fail\n");
-            return ret;
+			return ret;
         }
     } else {
         FW_UPDATE_INFO("kernel_fw_update:device_create fail\n");
@@ -106,7 +106,7 @@ static int __init kernel_fw_update_init(void)
 out_class:
     class_unregister(&kernel_fw_update_class);
 
-    return ret;
+	return ret;
 }
 
 static void __exit kernel_fw_update_exit(void)

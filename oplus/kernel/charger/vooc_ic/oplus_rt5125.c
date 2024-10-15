@@ -45,7 +45,9 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
+#endif
 #endif
 #include "oplus_vooc_fw.h"
 #include "../oplus_gauge.h"
@@ -1294,6 +1296,7 @@ struct oplus_plat_gauge_operations oplus_rt5125_plat_ops = {
 
 static void register_vooc_devinfo(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret = 0;
 	char *version;
 	char *manufacture;
@@ -1302,6 +1305,7 @@ static void register_vooc_devinfo(void)
 	ret = register_device_proc("vooc", version, manufacture);
 	if (ret)
 		chg_err(" fail\n");
+#endif
 }
 
 static int rt5125_parse_fw_from_dt(struct oplus_vooc_chip *chip)

@@ -607,6 +607,8 @@ static int cts_mode_switch(void *chip_data, work_mode mode, bool flag)
             break;
         case MODE_SLEEP:
             TPD_INFO("<I> switch MODE_SLEEP, SUSPEND\n");
+            cts_plat_reset_device(cts_data->pdata);
+            msleep(50);
             cts_send_command(cts_dev, CTS_CMD_SUSPEND);
             break;
         case MODE_EDGE:
@@ -619,6 +621,8 @@ static int cts_mode_switch(void *chip_data, work_mode mode, bool flag)
         case MODE_GESTURE:
             if (flag) {
                 TPD_INFO("<I> switch MODE_GESTURE, SUSPEND_WITH_GESTURE\n");
+                cts_plat_reset_device(cts_data->pdata);
+                msleep(50);
                 cts_send_command(cts_dev, CTS_CMD_SUSPEND_WITH_GESTURE);
             }
             break;

@@ -2890,6 +2890,7 @@ static void ilitek_black_screen_test(void *chip_data, char *message)
     ILI_INFO("enter %s\n", __func__);
     mutex_lock(&chip_info->touch_mutex);
     ret = ili_mp_test_handler(NULL, OFF, NULL, message);
+    tp_healthinfo_report(chip_info->monitor_data_v2, HEALTH_TEST_BLACKSCREEN, &ret);
     mutex_unlock(&chip_info->touch_mutex);
 }
 
@@ -3420,6 +3421,7 @@ static int ilitek_tp_auto_test_read_func(struct seq_file *s, void *v)
     mutex_lock(&ilits->touch_mutex);
     ILI_INFO("enter %s\n", __func__);
     ret = ili_mp_test_handler(NULL, ON, s, NULL);
+    tp_healthinfo_report(&ts->monitor_data_v2, HEALTH_TEST_AUTO, &ret);
     mutex_unlock(&ilits->touch_mutex);
     operate_mode_switch(ts);
     return 0;
@@ -3752,6 +3754,7 @@ static void ilitek_flag_data_init(void)
     ilits->tp_data_format = DATA_FORMAT_DEMO;
     ilits->tp_data_len = P5_X_DEMO_MODE_PACKET_LEN;
     ilits->tp_data_mode = AP_MODE;
+
     ilits->position_high_resolution = true;
 
     if (TDDI_RST_BIND) {
@@ -3907,6 +3910,8 @@ int __maybe_unused ilitek7807s_spi_probe(struct spi_device *spi)
         return -EIO;
     }
 
+    reset_healthinfo_time_counter(&time_counter);
+
     /*step1:Alloc chip_info*/
     if (ilitek_alloc_global_data(spi) < 0) {
         ret = -ENOMEM;
@@ -3997,6 +4002,10 @@ int __maybe_unused ilitek7807s_spi_probe(struct spi_device *spi)
         ILI_INFO("%s:change esd handle time to %d s\n",
                  __func__,
                  ts->esd_info.esd_work_time / HZ);
+    }
+
+    if (ts->health_monitor_v2_support) {
+        tp_healthinfo_report(&ts->monitor_data_v2, HEALTH_PROBE, &time_counter);
     }
 
     ILI_INFO("ILITEK Driver loaded successfully!\n");

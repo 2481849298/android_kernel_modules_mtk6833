@@ -48,6 +48,8 @@
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
+
+#include <linux/sysrq.h>
 #include <linux/clk.h>
 
 #include <linux/kmsg_dump.h>
@@ -59,12 +61,12 @@
 #include <soc/oplus/system/oplus_project.h>
 
 #define SEQ_printf(m, x...)     \
-        do {                        \
-                if (m)                  \
-                        seq_printf(m, x);   \
-                else                    \
-                        pr_debug(x);        \
-        } while (0)
+    do {                        \
+        if (m)                  \
+            seq_printf(m, x);   \
+        else                    \
+            pr_debug(x);        \
+    } while (0)
 
 #define OPLUS_SHUTDOWN_LOG_START_BLOCK_EMMC  10240
 #define OPLUS_SHUTDOWN_LOG_START_BLOCK_UFS   1280
@@ -143,10 +145,9 @@ time_t shutdown_systemserver_start_time = 0;
 time_t shutdown_init_start_time = 0;
 time_t shutdown_kernel_start_time = 0;
 
-static int shutdown_kthread(void *data)
-{
-	kernel_power_off();
-	return 0;
+static int shutdown_kthread(void *data){
+    kernel_power_off();
+    return 0;
 }
 
 static int shutdown_detect_func(void *dummy);
@@ -161,58 +162,53 @@ extern void shutdown_dump_android_log(void);
 
 static struct timespec current_boottime_time(void)
 {
-	struct timespec ts;
+    struct timespec ts;
 
-	getboottime(&ts);
+    getboottime(&ts);
 
-	return ts;
+    return ts;
 }
 
-static ssize_t shutdown_detect_trigger(struct file *filp, const char *ubuf,
-				       size_t cnt, loff_t *data)
+static ssize_t shutdown_detect_trigger(struct file *filp, const char *ubuf, size_t cnt, loff_t *data)
 {
-	char buf[64];
-	long val = 0;
-	int ret = 0;
+    char buf[64];
+    long val = 0;
+    int ret = 0;
+    struct task_struct *tsk = NULL;
+    unsigned int temp = SHUTDOWN_DEFAULT_TOTAL_TIME;
+
+    if(shutdown_detect_enable == false) {
+        return -EPERM;
+    }
+
+    if (cnt >= sizeof(buf)) {
+        return -EINVAL;
+    }
+
+    if (copy_from_user(&buf, ubuf, cnt)) {
+        return -EFAULT;
+    }
+
+    buf[cnt] = 0;
+
+    ret = kstrtoul(buf, 0, (unsigned long *)&val);
+
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (val == SHUTDOWN_STAGE_INIT_POFF) {
+         is_shutdows = true;
+         val = SHUTDOWN_STAGE_INIT;
+    }
+
+    if (OEM_RELEASE != get_eng_version()) {
+        gnativetimeout += SHUTDOWN_INCREASE_TIME;
+        gjavatimeout += SHUTDOWN_INCREASE_TIME;
+    }
 #ifdef OPLUS_BUG_STABILITY
-	struct task_struct *tsk = NULL;
-#endif
-	unsigned int temp = SHUTDOWN_DEFAULT_TOTAL_TIME;
-
-	if (shutdown_detect_enable == false) {
-		return -EPERM;
-	}
-
-	if (cnt >= sizeof(buf)) {
-		return -EINVAL;
-	}
-
-	if (copy_from_user(&buf, ubuf, cnt)) {
-		return -EFAULT;
-	}
-
-	buf[cnt] = 0;
-
-	ret = kstrtoul(buf, 0, (unsigned long *)&val);
-
-	if (ret < 0) {
-		return ret;
-	}
-
-	if (val == SHUTDOWN_STAGE_INIT_POFF) {
-		is_shutdows = true;
-		val = SHUTDOWN_STAGE_INIT;
-	}
-
-	if (OEM_RELEASE != get_eng_version()) {
-		gnativetimeout += SHUTDOWN_INCREASE_TIME;
-		gjavatimeout += SHUTDOWN_INCREASE_TIME;
-	}
-
-#ifdef OPLUS_BUG_STABILITY
-	tsk = current->group_leader;
-	pr_info("%s:%d shutdown_detect, GroupLeader is %s:%d\n", current->comm,
-		task_pid_nr(current), tsk->comm, task_pid_nr(tsk));
+    tsk = current->group_leader;
+    pr_info("%s:%d shutdown_detect, GroupLeader is %s:%d\n", current->comm, task_pid_nr(current), tsk->comm, task_pid_nr(tsk));
 #endif /*OPLUS_BUG_STABILITY*/
     //val: 0x gtotaltimeout|gjavatimeout|gnativetimeout , gnativetimeout < F, gjavatimeout < F
     if (val > SHUTDOWN_RUS_MIN) {
@@ -297,204 +293,183 @@ static ssize_t shutdown_detect_trigger(struct file *filp, const char *ubuf,
 	case SHUTDOWN_TIMEOUNT_SUBSYSTEM:
 		pr_err("shutdown_detect_timeout: ShutdownSubSystem timeout\n");
 		break;
-
-	case SHUTDOWN_TIMEOUNT_RADIOS:
-		pr_err("shutdown_detect_timeout: ShutdownRadios timeout\n");
-		break;
-
-	case SHUTDOWN_TIMEOUNT_PM:
-		pr_err("shutdown_detect_timeout: ShutdownPackageManager timeout\n");
-		break;
-
-	case SHUTDOWN_TIMEOUNT_AM:
-		pr_err("shutdown_detect_timeout: ShutdownActivityManager timeout\n");
-		break;
-
-	case SHUTDOWN_TIMEOUNT_BC:
-		pr_err("shutdown_detect_timeout: SendShutdownBroadcast timeout\n");
-		break;
-
-	default:
-		break;
-	}
-
-	if (!shutdown_task && is_shutdows) {
-		shutdown_task = kthread_create(shutdown_kthread, NULL, "shutdown_kthread");
-
-		if (IS_ERR(shutdown_task)) {
-			pr_err("create shutdown thread fail, will BUG()\n");
-			msleep(60 * 1000);
-			BUG();
-		}
-	}
-
-	return cnt;
+    case SHUTDOWN_TIMEOUNT_RADIOS:
+        pr_err("shutdown_detect_timeout: ShutdownRadios timeout\n");
+        break;
+    case SHUTDOWN_TIMEOUNT_PM:
+        pr_err("shutdown_detect_timeout: ShutdownPackageManager timeout\n");
+        break;
+    case SHUTDOWN_TIMEOUNT_AM:
+        pr_err("shutdown_detect_timeout: ShutdownActivityManager timeout\n");
+        break;
+    case SHUTDOWN_TIMEOUNT_BC:
+        pr_err("shutdown_detect_timeout: SendShutdownBroadcast timeout\n");
+        break;
+    default:
+        break;
+    }
+    if(!shutdown_task && is_shutdows) {
+        shutdown_task = kthread_create(shutdown_kthread, NULL,"shutdown_kthread");
+        if (IS_ERR(shutdown_task)) {
+            pr_err("create shutdown thread fail, will BUG()\n");
+            msleep(60*1000);
+            BUG();
+        }
+    }
+    return cnt;
 }
 
 static int shutdown_detect_show(struct seq_file *m, void *v)
 {
-	SEQ_printf(m, "=== shutdown_detect controller ===\n");
-	SEQ_printf(m, "0:   shutdown_detect abort\n");
-	SEQ_printf(m, "20:   shutdown_detect systemcall reboot phase\n");
-	SEQ_printf(m, "30:   shutdown_detect init reboot phase\n");
-	SEQ_printf(m, "40:   shutdown_detect system server reboot phase\n");
-	SEQ_printf(m, "=== shutdown_detect controller ===\n\n");
-	SEQ_printf(m, "shutdown_detect: shutdown phase: %u\n", shutdown_phase);
-	return 0;
+    SEQ_printf(m, "=== shutdown_detect controller ===\n");
+    SEQ_printf(m, "0:   shutdown_detect abort\n");
+    SEQ_printf(m, "20:   shutdown_detect systemcall reboot phase\n");
+    SEQ_printf(m, "30:   shutdown_detect init reboot phase\n");
+    SEQ_printf(m, "40:   shutdown_detect system server reboot phase\n");
+    SEQ_printf(m, "=== shutdown_detect controller ===\n\n");
+    SEQ_printf(m, "shutdown_detect: shutdown phase: %u\n", shutdown_phase);
+    return 0;
 }
 
 static int shutdown_detect_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, shutdown_detect_show, inode->i_private);
+    return single_open(file, shutdown_detect_show, inode->i_private);
 }
 
 static const struct file_operations shutdown_detect_fops = {
-	.open        = shutdown_detect_open,
-	.write       = shutdown_detect_trigger,
-	.read        = seq_read,
-	.llseek      = seq_lseek,
-	.release     = single_release,
+    .open        = shutdown_detect_open,
+    .write       = shutdown_detect_trigger,
+    .read        = seq_read,
+    .llseek      = seq_lseek,
+    .release     = single_release,
 };
 
-static int dump_kmsg(const char *filepath, size_t offset_of_start,
-		     struct kmsg_dumper *kmsg_dumper)
+static int dump_kmsg(const char * filepath, size_t offset_of_start, struct kmsg_dumper *kmsg_dumper)
 {
-	struct file *opfile;
-	loff_t offset;
-	char line[1024] = {0};
-	size_t len = 0;
-	int result = -1;
-	size_t bytes_writed = 0;
+    struct file *opfile;
+    loff_t offset;
+    char line[1024] = {0};
+    size_t len = 0;
+    int result = -1;
+    size_t bytes_writed = 0;
 
-	opfile = filp_open(filepath, O_CREAT | O_WRONLY | O_TRUNC, FILE_MODE_0666);
+    opfile = filp_open(filepath, O_CREAT | O_WRONLY | O_TRUNC, FILE_MODE_0666);
+    if (IS_ERR(opfile))
+    {
+        pr_err("filp_open %s failed, error: %ld\n", filepath, PTR_ERR(opfile));
+        return -1;
+    }
+    offset = offset_of_start;
 
-	if (IS_ERR(opfile)) {
-		pr_err("filp_open %s failed, error: %ld\n", filepath, PTR_ERR(opfile));
-		return -1;
-	}
+    kmsg_dumper->active = true;
+    while (kmsg_dump_get_line(kmsg_dumper, true, line, sizeof(line), &len)) {
+        line[len] = '\0';
+        mutex_lock(&shd_wf_mutex);
 
-	offset = offset_of_start;
+        bytes_writed = kernel_write(opfile, line, len, &offset);
 
-	kmsg_dumper->active = true;
-
-	while (kmsg_dump_get_line(kmsg_dumper, true, line, sizeof(line), &len)) {
-		line[len] = '\0';
-		mutex_lock(&shd_wf_mutex);
-
-		bytes_writed = kernel_write(opfile, line, len, &offset);
-
-		if (len != bytes_writed) {
-			pr_err("kernel_write %s failed, len: %lu bytes_writed: %lu\n", filepath, len,
-			       bytes_writed);
-			mutex_unlock(&shd_wf_mutex);
-			result = -1;
-			goto shd_fail;
-		}
-
-		mutex_unlock(&shd_wf_mutex);
-	}
-
-	result = 0;
+        if(len != bytes_writed)
+        {
+            pr_err("kernel_write %s failed, len: %lu bytes_writed: %lu\n", filepath, len, bytes_writed);
+            mutex_unlock(&shd_wf_mutex);
+            result = -1;
+            goto shd_fail;
+        }
+        mutex_unlock(&shd_wf_mutex);
+    }
+    result = 0;
 
 shd_fail:
-	vfs_fsync(opfile, 0);
-	filp_close(opfile, NULL);
+    vfs_fsync(opfile, 0);
+    filp_close(opfile, NULL);
 
-	return result;
+    return result;
 }
 
 int shutdown_kernel_log_save(void *args)
 {
-	if (0 != dump_kmsg(OPPO_PARTITION_OPPORESERVE3_LINK, OPLUS_SHUTDOWN_KMSG_OFFSET,
-			   &shutdown_kmsg_dumper)) {
-		pr_err("dump kmsg to OPPO_PARTITION_OPPORESERVE3_LINK failed\n");
-
-		if (0 != dump_kmsg(OPLUS_PARTITION_OPLUSRESERVE3_LINK,
-				   OPLUS_SHUTDOWN_KMSG_OFFSET, &shutdown_kmsg_dumper)) {
-			pr_err("dump kmsg to OPLUS_PARTITION_OPLUSRESERVE3_LINK failed\n");
-			complete(&shd_comp);
-			return -1;
-		}
-	}
-
-	complete(&shd_comp);
-	return 1;
+    if(0 != dump_kmsg(OPPO_PARTITION_OPPORESERVE3_LINK, OPLUS_SHUTDOWN_KMSG_OFFSET, &shutdown_kmsg_dumper))
+    {
+        pr_err("dump kmsg to OPPO_PARTITION_OPPORESERVE3_LINK failed\n");
+        if (0 != dump_kmsg(OPLUS_PARTITION_OPLUSRESERVE3_LINK, OPLUS_SHUTDOWN_KMSG_OFFSET, &shutdown_kmsg_dumper)) {
+		pr_err("dump kmsg to OPLUS_PARTITION_OPLUSRESERVE3_LINK failed\n");
+		complete(&shd_comp);
+		return -1;
+        }
+    }
+    complete(&shd_comp);
+    return 1;
 }
 
 static int shutdown_timeout_flag_write_now(void *args)
 {
-	struct file *opfile;
-	ssize_t size;
-	loff_t offsize;
-	char data_info[SIZEOF_STRUCT_SHD_INFO] = {'\0'};
-	int rc;
-	struct shd_info shutdown_flag;
+    struct file *opfile;
+    ssize_t size;
+    loff_t offsize;
+    char data_info[SIZEOF_STRUCT_SHD_INFO] = {'\0'};
+    int rc;
+    struct shd_info shutdown_flag;
 
-	opfile = filp_open(OPPO_PARTITION_OPPORESERVE3_LINK, O_RDWR, 0600);
+    opfile = filp_open(OPPO_PARTITION_OPPORESERVE3_LINK, O_RDWR, 0600);
 
-	if (IS_ERR(opfile)) {
-		pr_err("open OPPO_PARTITION_OPPORESERVE3_LINK error: %ld\n", PTR_ERR(opfile));
+    if (IS_ERR(opfile)) {
+        pr_err("open OPPO_PARTITION_OPPORESERVE3_LINK error: %ld\n",PTR_ERR(opfile));
 
-		opfile = filp_open(OPLUS_PARTITION_OPLUSRESERVE3_LINK, O_RDWR, 0600);
-
-		if (IS_ERR(opfile)) {
-			pr_err("open OPLUS_PARTITION_OPLUSRESERVE3_LINK error: %ld\n", PTR_ERR(opfile));
-			complete(&shd_comp);
-			return -1;
-		}
-	}
-
-	offsize = OPLUS_SHUTDOWN_FLAG_OFFSET;
-
-	strncpy(shutdown_flag.magic, "ShutDown", SHUTDOWN_MAGIC_LEN);
-
-	if (gtimeout) {
-		shutdown_flag.shutdown_err = ShutDownTO;
-
-	} else {
-		shutdown_flag.shutdown_err = 0;
-	}
-
-	shutdown_flag.shutdown_times = (int)(shutdown_end_time - shutdown_start_time);
-
-	memcpy(data_info, &shutdown_flag, SIZEOF_STRUCT_SHD_INFO);
-
-	size = kernel_write(opfile, data_info, SIZEOF_STRUCT_SHD_INFO, &offsize);
-
-	if (size < 0) {
-		pr_err("kernel_write data_info %s size %ld \n", data_info, size);
-		filp_close(opfile, NULL);
+        opfile = filp_open(OPLUS_PARTITION_OPLUSRESERVE3_LINK, O_RDWR, 0600);
+        if (IS_ERR(opfile)) {
+		pr_err("open OPLUS_PARTITION_OPLUSRESERVE3_LINK error: %ld\n", PTR_ERR(opfile));
 		complete(&shd_comp);
 		return -1;
-	}
+        }
+    }
 
-	rc = vfs_fsync(opfile, 1);
+    offsize = OPLUS_SHUTDOWN_FLAG_OFFSET;
 
-	if (rc) {
-		pr_err("sync returns %d\n", rc);
-	}
+    strncpy(shutdown_flag.magic, "ShutDown", SHUTDOWN_MAGIC_LEN);
+    if(gtimeout) {
+        shutdown_flag.shutdown_err = ShutDownTO;
+    } else {
+        shutdown_flag.shutdown_err = 0;
+    }
 
-	filp_close(opfile, NULL);
-	pr_info("shutdown_timeout_flag_write_now done \n");
-	complete(&shd_comp);
+    shutdown_flag.shutdown_times = (int)(shutdown_end_time - shutdown_start_time);
 
-	return 0;
+    memcpy(data_info, &shutdown_flag, SIZEOF_STRUCT_SHD_INFO);
+
+    size = kernel_write(opfile, data_info, SIZEOF_STRUCT_SHD_INFO, &offsize);
+    if (size < 0) {
+         pr_err("kernel_write data_info %s size %ld \n", data_info, size);
+         filp_close(opfile,NULL);
+         complete(&shd_comp);
+         return -1;
+    }
+
+    rc = vfs_fsync(opfile, 1);
+    if (rc)
+        pr_err("sync returns %d\n", rc);
+
+    filp_close(opfile,NULL);
+    pr_info("shutdown_timeout_flag_write_now done \n");
+    complete(&shd_comp);
+
+    return 0;
 }
 
-static void task_comm_to_struct(const char *pcomm,
-				struct task_struct **t_result)
+static void task_comm_to_struct(const char * pcomm, struct task_struct ** t_result)
 {
-	struct task_struct *g, *t;
-	rcu_read_lock();
-	for_each_process_thread(g, t) {
-		if (!strcmp(t->comm, pcomm)) {
-			*t_result = t;
-			rcu_read_unlock();
-			return;
-		}
-	}
-	t_result = NULL;
-	rcu_read_unlock();
+    struct task_struct *g, *t;
+    rcu_read_lock();
+    for_each_process_thread(g, t)
+    {
+        if(!strcmp(t->comm, pcomm))
+        {
+            *t_result = t;
+            rcu_read_unlock();
+            return;
+        }
+    }
+    t_result = NULL;
+    rcu_read_unlock();
 }
 
 #if IS_MODULE(CONFIG_OPLUS_FEATURE_SHUTDOWN_DETECT)
@@ -503,112 +478,104 @@ static void task_comm_to_struct(const char *pcomm,
 #endif
 void shutdown_dump_android_log(void)
 {
-	struct task_struct *sd_init;
-	sd_init = NULL;
-	task_comm_to_struct(TASK_INIT_COMM, &sd_init);
-
-	if (NULL != sd_init) {
-		pr_err("send shutdown_dump_android_log signal %d", SIG_SHUTDOWN);
+    struct task_struct *sd_init;
+    sd_init = NULL;
+    task_comm_to_struct(TASK_INIT_COMM, &sd_init);
+    if(NULL != sd_init)
+    {
+        pr_err("send shutdown_dump_android_log signal %d", SIG_SHUTDOWN);
 #if IS_MODULE(CONFIG_OPLUS_FEATURE_SHUTDOWN_DETECT)
-		send_sig_info(SIG_SHUTDOWN, __si_special(0), sd_init);
+        send_sig_info(SIG_SHUTDOWN, __si_special(0), sd_init);
 #else
-		send_sig(SIG_SHUTDOWN, sd_init, 0);
+        send_sig(SIG_SHUTDOWN, sd_init, 0);
 #endif
-		pr_err("after send shutdown_dump_android_log signal %d", SIG_SHUTDOWN);
-		/*wait to collect shutdown log finished*/
-		schedule_timeout_interruptible(20 * HZ);
-	}
+        pr_err("after send shutdown_dump_android_log signal %d", SIG_SHUTDOWN);
+        // wait to collect shutdown log finished
+        schedule_timeout_interruptible(20 * HZ);
+    }
 }
 
 static void shutdown_dump_kernel_log(void)
 {
-	struct task_struct *tsk;
-	tsk = kthread_run(shutdown_kernel_log_save, NULL, "shd_collect_dmesg");
-
-	if (IS_ERR(tsk)) {
-		pr_err("create kernel thread shd_collect_dmesg failed\n");
-		return;
-	}
-
-	/*wait max 10s to collect shutdown log finished*/
-	if (!wait_for_completion_timeout(&shd_comp, KE_LOG_COLLECT_TIMEOUT)) {
-		pr_err("collect kernel log timeout\n");
-	}
+    struct task_struct *tsk;
+    tsk = kthread_run(shutdown_kernel_log_save, NULL, "shd_collect_dmesg");
+    if(IS_ERR(tsk))
+    {
+        pr_err("create kernel thread shd_collect_dmesg failed\n");
+        return;
+    }
+    // wait max 10s to collect shutdown log finished
+    if(!wait_for_completion_timeout(&shd_comp, KE_LOG_COLLECT_TIMEOUT))
+    {
+        pr_err("collect kernel log timeout\n");
+    }
 }
 
 static void shutdown_timeout_flag_write(int timeout)
 {
-	struct task_struct *tsk;
+    struct task_struct *tsk;
 
-	gtimeout = timeout;
+    gtimeout = timeout;
 
-	shutdown_end_time = current_boottime_time().tv_sec;
+    shutdown_end_time = current_boottime_time().tv_sec;
 
-	tsk = kthread_run(shutdown_timeout_flag_write_now, NULL, "shd_to_flag");
-
-	if (IS_ERR(tsk)) {
-		pr_err("create kernel thread shd_to_flag failed\n");
-		return;
-	}
-
-	/*wait max 10s to collect shutdown log finished*/
-	if (!wait_for_completion_timeout(&shd_comp, KE_LOG_COLLECT_TIMEOUT)) {
-		pr_err("shutdown_timeout_flag_write timeout\n");
-	}
+    tsk = kthread_run(shutdown_timeout_flag_write_now, NULL, "shd_to_flag");
+    if(IS_ERR(tsk))
+    {
+        pr_err("create kernel thread shd_to_flag failed\n");
+        return;
+    }
+    // wait max 10s to collect shutdown log finished
+    if(!wait_for_completion_timeout(&shd_comp, KE_LOG_COLLECT_TIMEOUT))
+    {
+        pr_err("shutdown_timeout_flag_write timeout\n");
+    }
 }
 
 static int shutdown_detect_func(void *dummy)
 {
-	/*schedule_timeout_uninterruptible(gtotaltimeout * HZ);*/
-	msleep(gtotaltimeout * 1000);
+    //schedule_timeout_uninterruptible(gtotaltimeout * HZ);
+    msleep(gtotaltimeout * 1000);
 
-	pr_err("shutdown_detect:%s call sysrq show block and cpu thread. BUG\n",
-	       __func__);
-	handle_sysrq('w');
-	handle_sysrq('l');
-	pr_err("shutdown_detect:%s shutdown_detect status:%u. \n", __func__,
-	       shutdown_phase);
+    pr_err("shutdown_detect:%s call sysrq show block and cpu thread. BUG\n", __func__);
+    handle_sysrq('w');
+    handle_sysrq('l');
+    pr_err("shutdown_detect:%s shutdown_detect status:%u. \n", __func__, shutdown_phase);
 
-	if (shutdown_phase >= SHUTDOWN_STAGE_INIT) {
-		shutdown_dump_android_log();
-	}
+    if(shutdown_phase >= SHUTDOWN_STAGE_INIT) {
+        shutdown_dump_android_log();
+    }
 
-	shutdown_dump_kernel_log();
+    shutdown_dump_kernel_log();
 
-	shutdown_timeout_flag_write(1);/*timeout happened*/
+    shutdown_timeout_flag_write(1);// timeout happened
 
-	if (OEM_RELEASE == get_eng_version()) {
-		if (is_shutdows) {
-			pr_err("shutdown_detect: shutdown or reboot? shutdown\n");
-
-			if (shutdown_task) {
-				wake_up_process(shutdown_task);
-			}
-
-		} else {
-			pr_err("shutdown_detect: shutdown or reboot? reboot\n");
-			BUG();
-		}
-
-	} else {
-		pr_err("shutdown_detect_error, keep origin follow in !release build, but you can still get log in oplusreserve3\n");
-	}
-
-	return 0;
+    if (OEM_RELEASE == get_eng_version()) {
+        if(is_shutdows){
+            pr_err("shutdown_detect: shutdown or reboot? shutdown\n");
+            if(shutdown_task) {
+                wake_up_process(shutdown_task);
+            }
+        }else{
+            pr_err("shutdown_detect: shutdown or reboot? reboot\n");
+            BUG();
+        }
+    } else {
+        pr_err("shutdown_detect_error, keep origin follow in !release build, but you can still get log in oplusreserve3\n");
+    }
+    return 0;
 }
 
 static int __init init_shutdown_detect_ctrl(void)
 {
-	struct proc_dir_entry *pe;
-	pr_err("shutdown_detect:register shutdown_detect interface\n");
-	pe = proc_create("shutdown_detect", 0664, NULL, &shutdown_detect_fops);
-
-	if (!pe) {
-		pr_err("shutdown_detect:Failed to register shutdown_detect interface\n");
-		return -ENOMEM;
-	}
-
-	return 0;
+    struct proc_dir_entry *pe;
+    pr_err("shutdown_detect:register shutdown_detect interface\n");
+    pe = proc_create("shutdown_detect", 0664, NULL, &shutdown_detect_fops);
+    if (!pe) {
+        pr_err("shutdown_detect:Failed to register shutdown_detect interface\n");
+        return -ENOMEM;
+    }
+    return 0;
 }
 
 device_initcall(init_shutdown_detect_ctrl);

@@ -113,7 +113,7 @@ static int sensor_monitor_data_report(struct data_unit_t *input_event)
     event.word[0] = input_event->oplus_data_t.sensor_monitor_event.state;
     event.word[1] = input_event->oplus_data_t.sensor_monitor_event.report_count;
 
-    return virtual_sensor_data_report(event);
+    return virtual_sensor_data_report(&event);
 }
 
 static int sensor_monitor_flush_report()
@@ -245,12 +245,16 @@ static void enable_timer_init(void)
 {
     enable_wq = create_singlethread_workqueue("sensor_monitor_enable");
     INIT_WORK(&enable_work, enable_work_callback);
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+    timer_setup(&enable_timer, &enable_timer_callback, 0);
+    mod_timer(&enable_timer, jiffies + (60 * HZ));
+#else
     init_timer(&enable_timer);
     enable_timer.expires = jiffies + (60 * HZ);
     enable_timer.function = &enable_timer_callback;
     enable_timer.data = ((unsigned long)0);
     mod_timer(&enable_timer, enable_timer.expires);
+#endif
 }
 
 static int __init sensor_monitor_init(void)

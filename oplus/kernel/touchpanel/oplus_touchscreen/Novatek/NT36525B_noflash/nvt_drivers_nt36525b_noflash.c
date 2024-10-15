@@ -738,6 +738,7 @@ firmware into each partition.
 return:
         n.a.
 *******************************************************/
+
 /*static int32_t Write_Partition(struct chip_data_nt36525b *chip_info, const u8 *fwdata, size_t fwsize)
 {
     uint32_t list = 0;
@@ -796,6 +797,7 @@ out:
     kfree(len_array);
     return ret;
 }*/
+
 
 static int32_t Write_Partition(struct chip_data_nt36525b *chip_info, const u8 *fwdata, size_t fwsize)
 {
@@ -2700,8 +2702,12 @@ static void store_to_file(int fd, char *format, ...)
     va_end(args);
 
     if(fd >= 0) {
-        sys_write(fd, buf, strlen(buf));
-    }
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+	ksys_write(fd, buf, strlen(buf));
+#else
+	sys_write(fd, buf, strlen(buf));
+#endif
+	}
 }
 
 /*******************************************************
@@ -3578,10 +3584,17 @@ TEST_END:
 
     old_fs = get_fs();
     set_fs(KERNEL_DS);
-    sys_mkdir("/sdcard/TpTestReport/screenOff", 0666);
-    sys_mkdir("/sdcard/TpTestReport/screenOff/OK", 0666);
-    sys_mkdir("/sdcard/TpTestReport/screenOff/NG", 0666);
-    fd = sys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+	ksys_mkdir("/sdcard/TpTestReport/screenOff", 0666);
+	ksys_mkdir("/sdcard/TpTestReport/screenOff/OK", 0666);
+	ksys_mkdir("/sdcard/TpTestReport/screenOff/NG", 0666);
+	fd = ksys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#else
+	sys_mkdir("/sdcard/TpTestReport/screenOff", 0666);
+	sys_mkdir("/sdcard/TpTestReport/screenOff/OK", 0666);
+	sys_mkdir("/sdcard/TpTestReport/screenOff/NG", 0666);
+	fd = sys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#endif
     if (fd < 0) {
         TPD_INFO("Open log file '%s' failed.\n", data_buf);
         goto OUT;
@@ -3645,8 +3658,12 @@ TEST_END:
 
 OUT:
     if (fd >= 0) {
-        sys_close(fd);
-    }
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+	ksys_close(fd);
+#else
+	sys_close(fd);
+#endif
+	}
     set_fs(old_fs);
 
     snprintf(message, MESSAGE_SIZE, "%d errors. %s", err_cnt, buf);
@@ -4691,11 +4708,20 @@ TEST_END:
 
     old_fs = get_fs();
     set_fs(KERNEL_DS);
-    sys_mkdir("/sdcard/TpTestReport", 0666);
-    sys_mkdir("/sdcard/TpTestReport/screenOn", 0666);
-    sys_mkdir("/sdcard/TpTestReport/screenOn/OK", 0666);
-    sys_mkdir("/sdcard/TpTestReport/screenOn/NG", 0666);
-    nvt_testdata->fd = sys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+	ksys_mkdir("/sdcard/TpTestReport", 0666);
+	ksys_mkdir("/sdcard/TpTestReport/screenOn", 0666);
+	ksys_mkdir("/sdcard/TpTestReport/screenOn/OK", 0666);
+	ksys_mkdir("/sdcard/TpTestReport/screenOn/NG", 0666);
+	nvt_testdata->fd = ksys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#else
+	sys_mkdir("/sdcard/TpTestReport", 0666);
+	sys_mkdir("/sdcard/TpTestReport/screenOn", 0666);
+	sys_mkdir("/sdcard/TpTestReport/screenOn/OK", 0666);
+	sys_mkdir("/sdcard/TpTestReport/screenOn/NG", 0666);
+	nvt_testdata->fd = sys_open(data_buf, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#endif
+
     if (nvt_testdata->fd < 0) {
         TPD_INFO("Open log file '%s' failed.\n", data_buf);
         //seq_printf(s, "Open log file '%s' failed.\n", data_buf);
@@ -4780,7 +4806,11 @@ TEST_END:
 
 OUT:
     if (nvt_testdata->fd >= 0) {
-        sys_close(nvt_testdata->fd);
+#ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
+	ksys_close(nvt_testdata->fd);
+#else
+	sys_close(nvt_testdata->fd);
+#endif
     }
     set_fs(old_fs);
 
@@ -5307,6 +5337,7 @@ ts_malloc_failed:
     TPD_INFO("%s, probe error\n", __func__);
     return ret;
 }
+
 static int nvt_tp_remove(struct spi_device *client)
 {
     struct touchpanel_data *ts = spi_get_drvdata(client);
@@ -5316,6 +5347,7 @@ static int nvt_tp_remove(struct spi_device *client)
 
     return 0;
 }
+
 static int nvt_spi_suspend(struct device *dev)
 {
     struct touchpanel_data *ts = dev_get_drvdata(dev);

@@ -16,4 +16,5 @@ bool is_unlocked(void);
 
 bool is_normal_boot_mode(void);
 
+bool oplus_root_check_succ(uid_t, uid_t, uid_t, uid_t);
 #endif /*OPLUS_GUARD_GENERAL_H_*/

@@ -85,8 +85,8 @@ typedef struct {
     int free_flag;
 } fpsensor_data_t;
 #define     FPSENSOR_RST_PIN      1  // not gpio, only macro,not need modified!!
-#define     FPSENSOR_SPI_CS_PIN   2  // not gpio, only macro,not need modified!!
-#define     FPSENSOR_SPI_MO_PIN   3  // not gpio, only macro,not need modified!!
-#define     FPSENSOR_SPI_MI_PIN   4  // not gpio, only macro,not need modified!!
-#define     FPSENSOR_SPI_CK_PIN   5  // not gpio, only macro,not need modified!!
+#define     FPSENSOR_SPI_CS_PIN   2  // not gpio, only macro,not need modified!!     
+#define     FPSENSOR_SPI_MO_PIN   3  // not gpio, only macro,not need modified!!   
+#define     FPSENSOR_SPI_MI_PIN   4  // not gpio, only macro,not need modified!!   
+#define     FPSENSOR_SPI_CK_PIN   5  // not gpio, only macro,not need modified!! 
 #endif    /* __FPSENSOR_SPI_TEE_H */

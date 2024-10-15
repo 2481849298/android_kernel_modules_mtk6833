@@ -11,7 +11,7 @@
 # GNU General Public License for more details.
 #
 
-obj-m += udc_lib.o
+obj-y += udc_lib.o
 
 udc_lib-y += \
     adler32.o \

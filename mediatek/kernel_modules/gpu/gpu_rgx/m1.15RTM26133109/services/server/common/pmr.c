@@ -471,14 +471,27 @@ IMG_BOOL PMRIsPMRLive(PMR *psPMR)
 static IMG_UINT32
 _Ref(PMR *psPMR)
 {
-	PVR_ASSERT(OSAtomicRead(&psPMR->iRefCount) >= 0);
+	if (OSAtomicRead(&psPMR->iRefCount) == 0)
+	{
+		PVR_DPF((PVR_DBG_ERROR, "pmr.c: Ref Count == 0 PMR: @0x%p Annot: %s",
+		                        psPMR,
+		                        psPMR->szAnnotation));
+		OSWarnOn(1);
+	}
 	return OSAtomicIncrement(&psPMR->iRefCount);
 }
 
 static IMG_UINT32
 _Unref(PMR *psPMR)
 {
-	PVR_ASSERT(OSAtomicRead(&psPMR->iRefCount) > 0);
+	if (OSAtomicRead(&psPMR->iRefCount) <= 0)
+	{
+		PVR_DPF((PVR_DBG_ERROR, "pmr.c: Unref Count <= 0 PMR: @0x%p Annot: %s RefCount: %d",
+		                        psPMR,
+		                        psPMR->szAnnotation,
+		                        (IMG_INT32) OSAtomicRead(&psPMR->iRefCount)));
+		OSWarnOn(1);
+	}
 	return OSAtomicDecrement(&psPMR->iRefCount);
 }
 
@@ -1668,8 +1681,13 @@ PMR_WriteBytes(PMR *psPMR,
 }
 
 PVRSRV_ERROR
-PMRMMapPMR(PMR *psPMR, PMR_MMAP_DATA pOSMMapData)
+PMRMMapPMR(PMR *psPMR, PMR_MMAP_DATA pOSMMapData, PVRSRV_MEMALLOCFLAGS_T uiFlags)
 {
+	/* if writeable mapping is requested on non-writeable PMR then fail */
+	PVR_RETURN_IF_FALSE(PVRSRV_CHECK_CPU_WRITEABLE(psPMR->uiFlags) ||
+	                    !PVRSRV_CHECK_CPU_WRITEABLE(uiFlags),
+	                    PVRSRV_ERROR_PMR_NOT_PERMITTED);
+
 	if (psPMR->psFuncTab->pfnMMap)
 	{
 		return psPMR->psFuncTab->pfnMMap(psPMR->pvFlavourData, psPMR, pOSMMapData);
@@ -1856,6 +1874,12 @@ PMR_GetLog2Contiguity(const PMR *psPMR)
 	return psPMR->uiLog2ContiguityGuarantee;
 }
 
+IMG_UINT32 PMRGetMaxChunkCount(PMR *psPMR)
+{
+	PVR_ASSERT(psPMR != NULL);
+	return (PMR_MAX_SUPPORTED_SIZE >> psPMR->uiLog2ContiguityGuarantee);
+}
+
 const IMG_CHAR *
 PMR_GetAnnotation(const PMR *psPMR)
 {
@@ -1902,7 +1926,7 @@ PMR_DevPhysAddr(const PMR *psPMR,
 	if (ui32NumOfPages > PMR_MAX_TRANSLATION_STACK_ALLOC)
 	{
 		puiPhysicalOffset = OSAllocMem(ui32NumOfPages * sizeof(IMG_DEVMEM_OFFSET_T));
-		PVR_GOTO_IF_NOMEM(puiPhysicalOffset, eError, e0);
+		PVR_RETURN_IF_NOMEM(puiPhysicalOffset);
 	}
 
 	_PMRLogicalOffsetToPhysicalOffset(psPMR,
@@ -1921,13 +1945,17 @@ PMR_DevPhysAddr(const PMR *psPMR,
 		                                          puiPhysicalOffset,
 		                                          pbValid,
 		                                          psDevAddrPtr);
-#if defined(PVR_PMR_TRANSLATE_UMA_ADDRESSES)
-		/* Currently excluded from the default build because of performance concerns.
-		 * We do not need this part in all systems because the GPU has the same address view of system RAM as the CPU.
-		 * Alternatively this could be implemented as part of the PMR-factories directly */
+		PVR_GOTO_IF_ERROR(eError, FreeOffsetArray);
 
+#if defined(PVR_PMR_TRANSLATE_UMA_ADDRESSES)
+		/* Currently excluded from the default build because of performance
+		 * concerns.
+		 * We do not need this part in all systems because the GPU has the same
+		 * address view of system RAM as the CPU.
+		 * Alternatively this could be implemented as part of the PMR-factories
+		 * directly */
 		if (PhysHeapGetType(psPMR->psPhysHeap) == PHYS_HEAP_TYPE_UMA ||
-				PhysHeapGetType(psPMR->psPhysHeap) == PHYS_HEAP_TYPE_DMA)
+		    PhysHeapGetType(psPMR->psPhysHeap) == PHYS_HEAP_TYPE_DMA)
 		{
 			IMG_UINT32 i;
 			IMG_DEV_PHYADDR sDevPAddrCorrected;
@@ -1945,17 +1973,12 @@ PMR_DevPhysAddr(const PMR *psPMR,
 #endif
 	}
 
+FreeOffsetArray:
 	if (puiPhysicalOffset != auiPhysicalOffset)
 	{
 		OSFreeMem(puiPhysicalOffset);
 	}
 
-	PVR_GOTO_IF_ERROR(eError, e0);
-
-	return PVRSRV_OK;
-
-e0:
-	PVR_ASSERT(eError != PVRSRV_OK);
 	return eError;
 }
 

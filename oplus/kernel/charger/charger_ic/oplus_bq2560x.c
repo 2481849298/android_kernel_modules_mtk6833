@@ -35,13 +35,15 @@
 #include <linux/reboot.h>
 #include <linux/regmap.h>
 #include <mt-plat/upmu_common.h>
+#include "../oplus_chg_track.h"
 
 #include <mt6357-pulse-charger.h>
 #include <charger_class.h>
 #include "../oplus_charger.h"
 #include "oplus_bq2560x_reg.h"
 #include "../oplus_vooc.h"
-
+extern int oplus_get_rtc_ui_soc(void);
+extern int oplus_set_rtc_ui_soc(int value);
 extern void oplus_wake_up_usbtemp_thread(void);
 extern int oplus_chg_get_charger_subtype(void);
 extern int oplus_chg_pd_setup(void);
@@ -69,7 +71,9 @@ void oplus_bq2560x_set_mivr_by_battery_vol(void);
 static struct bq2560x *g_bq;
 static bool first_connect = false;
 extern struct oplus_chg_chip *g_oplus_chip;
+#ifdef CONFIG_OPLUS_CHARGER_MTK
 extern struct regmap *mt6357_regmap;
+#endif
 
 extern void oplus_vooc_reset_fastchg_after_usbout(void);
 extern bool oplus_vooc_get_fastchg_started(void);
@@ -307,7 +311,6 @@ static int bq2560x_write_byte(struct bq2560x *bq, u8 reg, u8 data)
 	if (ret) {
 		pr_err("Failed: reg=%02X, ret=%d\n", reg, ret);
 	}
-
 	return ret;
 }
 
@@ -338,6 +341,7 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_OPLUS_CHARGER_MTK
 static void hw_bc11_init(void)
 {
 #if IS_ENABLED(CONFIG_USB_MTK_HDRC)
@@ -485,7 +489,6 @@ static unsigned int hw_bc11_DCD(void)
 	return wChargerAvail;
 }
 
-#ifdef CONFIG_OPLUS_CHARGER_MTK
 /*modify for cfi*/
 static int oplus_get_boot_mode(void)
 {
@@ -496,7 +499,6 @@ static int oplus_get_boot_reason(void)
 {
 	return 0;
 }
-#endif
 
 static unsigned int hw_bc11_stepA2(void)
 {
@@ -657,6 +659,7 @@ static void hw_bc11_done(void)
 #endif
 
 }
+#endif /* CONFIG_OPLUS_CHARGER_MTK */
 
 static void dump_charger_name(int type)
 {
@@ -682,8 +685,16 @@ static void dump_charger_name(int type)
 	}
 }
 
-static int hw_charging_get_charger_type(void) {
+static int hw_charging_get_charger_type(void)
+{
 	enum charger_type g_chr_type_num = CHARGER_UNKNOWN;
+
+#ifdef CONFIG_OPLUS_CHARGER_MTK
+	if (mt6357_regmap == NULL) {
+		pr_err("mt6357 driver probe failed\n");
+		return g_chr_type_num;
+	}
+
 	/********* Step initial  ***************/
 	hw_bc11_init();
 
@@ -716,6 +727,7 @@ static int hw_charging_get_charger_type(void) {
 	} else {
 		pr_notice("charger type: skip bc11 release for BC12 DCP SPEC\n");
 	}
+#endif /* CONFIG_OPLUS_CHARGER_MTK */
 
 	dump_charger_name(g_chr_type_num);
 
@@ -1389,6 +1401,7 @@ static int bq2560x_init_device(struct bq2560x *bq)
 #endif
 static bool oplus_bq2560x_pd_without_usb(void)
 {
+#ifdef CONFIG_TCPC_CLASS
 	if (!g_oplus_chip || !g_bq || !g_bq->tcpc) {
 		chg_err("fail to init oplus_chip\n");
 		return false;
@@ -1398,6 +1411,9 @@ static bool oplus_bq2560x_pd_without_usb(void)
 		return false;
 
 	return (tcpm_inquire_dpm_flags(g_bq->tcpc) & DPM_FLAGS_PARTNER_USB_COMM) ? false : true;
+#else
+	return false;
+#endif
 }
 
 static int bq2560x_bc12_detect(struct bq2560x *bq)
@@ -1459,6 +1475,43 @@ static int bq2560x_detect_device(struct bq2560x* bq)
 	}
 
     return ret;
+}
+
+static void register_charger_devinfo(struct bq2560x* bq)
+{
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
+	int ret = 0;
+	char *version;
+	char *manufacture;
+
+	if(!bq) {
+		chg_err("No bq2560x device found!\n");
+		return;
+        }
+	switch (bq->part_no) {
+	case 0x00:
+		version = "bq25600";
+		manufacture = "TI";
+		break;
+	case 0x02:
+		version = "bq25601";
+		manufacture = "TI";
+		break;
+	default:
+		version = "unknown";
+		manufacture = "UNKNOWN";
+		break;
+	}
+	if (strcmp(g_bq->chg_dev_name, "primary_chg") == 0) {
+		ret = register_device_proc("charger", version, manufacture);
+	}
+	else {
+		ret = register_device_proc("secondary_charger",version,manufacture);
+	}
+	if (ret) {
+          pr_err("register_charger_devinfo failed\n");
+        }
+#endif
 }
 
 #ifdef CONFIG_TCPC_CLASS
@@ -1880,6 +1933,10 @@ bool oplus_bq2560x_check_chrdet_status(void)
 {
 	bool pre_vbus_status = false;
 
+	if (g_oplus_chip == NULL) {
+		return false;
+	}
+
 	/* Keep the charger in place during fast charge communication */
 	if (oplus_voocphy_get_fastchg_commu_ing()) {
 		pre_vbus_status = true;
@@ -1900,11 +1957,20 @@ bool oplus_bq2560x_check_chrdet_status(void)
 			return false;
 		}
 	}
+#else
+	if (g_oplus_chip->otg_online == true) {
+		return false;
+	}
 #endif
-	pre_vbus_status = pmic_get_register_value(mt6357_regmap,
-		PMIC_RGS_CHRDET_ADDR,
-		PMIC_RGS_CHRDET_MASK,
-		PMIC_RGS_CHRDET_SHIFT);
+
+#ifdef CONFIG_OPLUS_CHARGER_MTK
+	if (mt6357_regmap)
+		pre_vbus_status = pmic_get_register_value(mt6357_regmap,
+							  PMIC_RGS_CHRDET_ADDR,
+							  PMIC_RGS_CHRDET_MASK,
+							  PMIC_RGS_CHRDET_SHIFT);
+#endif /* CONFIG_OPLUS_CHARGER_MTK */
+
 	chg_err("[BQ2560X] pre_vbus_status: %s\n", pre_vbus_status?"Pass":"Fail");
 
 	g_bq->psy_online = pre_vbus_status;
@@ -1935,6 +2001,11 @@ static irqreturn_t bq2560x_irq_handler(int irq, void *data)
 	struct oplus_chg_chip *chip = g_oplus_chip;
 	bool vbus_status = false;
 
+	if (bq == NULL || chip == NULL){
+		chg_err("fail to init chip or bq2560x\n");
+		return IRQ_HANDLED;
+	}
+
 	ret = bq2560x_read_byte(bq, &reg_val, BQ2560X_REG_08);
 	if (ret)
 		return IRQ_HANDLED;
@@ -1945,6 +2016,8 @@ static irqreturn_t bq2560x_irq_handler(int irq, void *data)
 
 	pr_notice("bq2560x_irq_handler:(%d,%d)\n",prev_pg,bq->power_good);
 	oplus_bq2560x_dump_registers();
+
+	oplus_chg_track_check_wired_charging_break(bq->power_good);
 
 	if (oplus_vooc_get_fastchg_started() == true) {
 		chg_err("oplus_vooc_get_fastchg_started = true!(%d %d)\n", prev_pg, bq->power_good);
@@ -1961,6 +2034,7 @@ static irqreturn_t bq2560x_irq_handler(int irq, void *data)
 	if (!prev_pg && bq->power_good) {
 		get_monotonic_boottime(&bq->ptime[0]);
 		g_bq->psy_online = true;
+		oplus_chg_track_check_wired_charging_break(g_bq->psy_online);
 
 		bq2560x_inform_charger_type(bq);
 		bq2560x_inform_online_type(bq);
@@ -1975,6 +2049,7 @@ static irqreturn_t bq2560x_irq_handler(int irq, void *data)
 			return IRQ_HANDLED;
 		}
 		bq->psy_online = false;
+		oplus_chg_track_check_wired_charging_break(bq->psy_online);
 		bq->pre_current_ma = -1;
 		bq->chg_type = CHARGER_UNKNOWN;
 		bq->oplus_chg_type = POWER_SUPPLY_TYPE_UNKNOWN;
@@ -2136,6 +2211,7 @@ static struct charger_ops bq2560x_chg_ops = {
 /* v-haoyunlai 给otg节点赋值 */
 bool oplus_get_otg_online_status_default(void)
 {
+#ifdef CONFIG_TCPC_CLASS
 	pr_info("start\n");
 	if (!g_oplus_chip || !g_bq || !g_bq->tcpc) {
 		chg_err("fail to init oplus_chip\n");
@@ -2147,6 +2223,9 @@ bool oplus_get_otg_online_status_default(void)
 	else
 		g_oplus_chip->otg_online = false;
 	return g_oplus_chip->otg_online;
+#else
+	return g_oplus_chip->otg_online;
+#endif
 }
 
 int oplus_get_otg_online_status(void)
@@ -2223,6 +2302,9 @@ int oplus_bq2560x_set_aicr(int current_ma)
 	int aicl_point = 0;
 	int aicl_point_temp = 0;
 
+	if (chip == NULL)
+		return -EINVAL;
+
 	if (strcmp(g_bq->chg_dev_name, "primary_chg") == 0) {
 		if(g_bq->chg_type == CHARGER_UNKNOWN){
 			current_ma = 500;
@@ -2244,6 +2326,12 @@ int oplus_bq2560x_set_aicr(int current_ma)
 			aicl_point_temp = aicl_point = SW_AICL_POINT_VOL_5V_PHASE1;
 	}
 	chg_err("[BQ2560X] [current_ma:%d, chg_vol:%d, batt_volt:%d ,aicl_point:%d]\n", current_ma, chg_vol, chip->batt_volt, aicl_point);
+	if (chip->stop_chg == 0 && ((g_bq->oplus_chg_type == POWER_SUPPLY_TYPE_USB || g_bq->oplus_chg_type == POWER_SUPPLY_TYPE_USB_CDP)
+		|| chip->mmi_chg == 0)) {
+		bq2560x_disable_charger(g_bq);
+		i = 0;
+		goto aicl_end;
+	}
 
 	if (current_ma < 500) {
 		i = 0;
@@ -2413,9 +2501,10 @@ int oplus_bq2560x_set_input_current_limit(int current_ma)
 	get_monotonic_boottime(&g_bq->ptime[1]);
 	diff = timespec_sub(g_bq->ptime[1], g_bq->ptime[0]);
 	g_bq->aicr = cur_ma;
-	if (cur_ma && diff.tv_sec < 3) {
-		ms = (3 - diff.tv_sec)*1000;
+	if (cur_ma && diff.tv_sec < 1) {
+		ms = (1 - diff.tv_sec)*1000;
 		cancel_delayed_work(&g_bq->bq2560x_aicr_setting_work);
+		//ms = 1000;
 		pr_info("delayed work %d ms", ms);
 		schedule_delayed_work(&g_bq->bq2560x_aicr_setting_work, msecs_to_jiffies(ms));
 	} else {
@@ -2546,6 +2635,10 @@ int oplus_bq2560x_enable_otg(void)
 		return ret;
 	}
 
+#ifndef CONFIG_TCPC_CLASS
+	g_oplus_chip->otg_online = true;
+#endif
+
 	g_bq->otg_enable = true;
 	return ret;
 }
@@ -2560,6 +2653,10 @@ int oplus_bq2560x_disable_otg(void)
 		pr_notice("disable otg fail(%d)\n", ret);
 		return ret;
 	}
+
+#ifndef CONFIG_TCPC_CLASS
+	g_oplus_chip->otg_online = false;
+#endif
 
 	g_bq->otg_enable = false;
 	return ret;
@@ -2844,8 +2941,13 @@ struct oplus_chg_operations  oplus_chg_bq2560x_ops = {
 	.get_boot_mode = (int (*)(void))oplus_get_boot_mode,
 	.get_boot_reason = (int (*)(void))oplus_get_boot_reason,
 	.get_instant_vbatt = oplus_battery_meter_get_battery_voltage,
+#ifdef CONFIG_OPLUS_CHARGER_MTK
 	.get_rtc_soc = oplus_bq2560x_get_rtc_spare_oplus_fg_value,
 	.set_rtc_soc = oplus_bq2560x_set_rtc_spare_oplus_fg_value,
+#else
+	.get_rtc_soc = oplus_get_rtc_ui_soc,
+	.set_rtc_soc = oplus_set_rtc_ui_soc,
+#endif
 	.set_power_off = oplus_mt_power_off,
 	.usb_connect = mt_usb_connect,
 	.usb_disconnect = mt_usb_disconnect,
@@ -3219,6 +3321,7 @@ static int bq2560x_charger_probe(struct i2c_client *client,
 
 	bq->oplus_chg_type = POWER_SUPPLY_TYPE_UNKNOWN;
 	bq->pre_current_ma = -1;
+	register_charger_devinfo(bq);
 
 #ifndef CONFIG_TCPC_CLASS
 	if (strcmp(bq->chg_dev_name, "primary_chg") == 0) {
@@ -3341,6 +3444,7 @@ static int bq2560x_charger_remove(struct i2c_client *client)
 
 static void bq2560x_charger_shutdown(struct i2c_client *client)
 {
+	oplus_bq2560x_disable_otg();
 }
 
 static struct of_device_id bq2560x_charger_match_table[] = {

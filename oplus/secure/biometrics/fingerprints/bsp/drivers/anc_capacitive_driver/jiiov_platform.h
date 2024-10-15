@@ -24,6 +24,10 @@
 //#define ANC_USE_POWER_GPIO
 #define ANC_SUPPORT_NAVIGATION_EVENT
 
+#ifdef CONFIG_REGULATOR_OPLUS_WL2868C_FP_LDO
+#define ANC_USE_EXT_PMIC
+#endif
+
 #ifdef ANC_SUPPORT_NAVIGATION_EVENT
 typedef enum {
     ANC_KEY_NONE = 0,
@@ -98,9 +102,9 @@ typedef enum {
     ANC_NETLINK_EVENT_MAX
 }ANC_NETLINK_EVENT_TYPE;
 
-int netlink_send_message_to_user(const char *p_buffer, size_t length);
-int anc_netlink_init(void);
-void anc_netlink_exit(void);
+int anc_cap_netlink_send_message_to_user(const char *p_buffer, size_t length);
+int anc_cap_netlink_init(void);
+void anc_cap_netlink_exit(void);
 
 
 #endif /* __JIIOV_PLATFORM_H__ */

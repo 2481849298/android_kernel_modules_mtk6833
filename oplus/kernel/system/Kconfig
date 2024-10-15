@@ -39,7 +39,6 @@ config OPLUS_FEATURE_DETAILHEAD
 source "drivers/soc/oplus/system/feedback/Kconfig"
 source "drivers/soc/oplus/system/uboot_log/Kconfig"
 source "drivers/soc/oplus/system/shutdown_detect/Kconfig"
-source "drivers/soc/oplus/system/slabtrace/Kconfig"
 source "drivers/soc/oplus/system/oplus_project/Kconfig"
 source "drivers/soc/oplus/system/qcom_minidump/Kconfig"
 source "drivers/soc/oplus/system/hung_task_enhance/Kconfig"
@@ -55,10 +54,6 @@ source "drivers/soc/oplus/system/full_aging/Kconfig"
 #ifdef OPLUS_FEATURE_QCOM_PMICWD
 source "drivers/soc/oplus/system/qcom_pmicwd/Kconfig"
 #endif /* OPLUS_FEATURE_QCOM_PMICWD */
-
-#ifdef OPLUS_FEATURE_MM_OSVELTE
-source "drivers/soc/oplus/system/mm_osvelte/Kconfig"
-#endif /* OPLUS_FEATURE_MM_OSVELTE */
 
 #ifdef OPLUS_FEATURE_DUMP_REASON
 source "drivers/soc/oplus/system/dump_reason/Kconfig"
@@ -100,3 +95,10 @@ source "drivers/soc/oplus/system/oplus_hans/Kconfig"
 source "drivers/soc/oplus/system/olc/Kconfig"
 #endif /* OPLUS_FEATURE_LOG_CORE */
 
+#ifdef CONFIG_OPLUS_FEATURE_FDLEAK_CHECK
+source "drivers/soc/oplus/system/oplus_fdleak/Kconfig"
+#endif /*CONFIG_OPLUS_FEATURE_FDLEAK_CHECK*/
+
+#ifdef OPLUS_FEATURE_LAST_BOOT_REASON
+source "drivers/soc/oplus/system/last_boot_reason/Kconfig"
+#endif /*OPLUS_FEATURE_LAST_BOOT_REASON*/

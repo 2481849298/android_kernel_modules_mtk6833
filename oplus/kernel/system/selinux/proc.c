@@ -8,6 +8,7 @@
 #include <linux/kobject.h>
 #include <linux/init.h>
 #include <linux/uaccess.h>
+//#include <asm/uaccess.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>

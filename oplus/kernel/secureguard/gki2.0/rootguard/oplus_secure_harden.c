@@ -23,9 +23,10 @@
 #include <linux/ktime.h>
 #include <linux/bootconfig.h>
 
-#ifndef CONFIG_OPLUS_SYSTEM_KERNEL_QCOM   /* Used to determine whether it is MTK platform */
+/* Used to determine whether it is MTK platform or kernel version >= 5.15*/
 #include <linux/device.h>
 #include <linux/version.h>
+#if !defined(CONFIG_OPLUS_SYSTEM_KERNEL_QCOM) || (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 /* for dx1 bringup */
 #ifdef __KERNEL__
@@ -35,8 +36,8 @@ struct timespec {
 	__kernel_old_time_t	tv_sec;		/* seconds */
 	long			tv_nsec;	/* nanoseconds */
 };
-#endif
-#endif
+#endif /* _STRUCT_TIMESPEC */
+#endif /* __KERNEL__ */
 
 #if __BITS_PER_LONG == 64
 /* timespec64 is defined as timespec here */
@@ -64,7 +65,7 @@ static inline struct timespec64 timespec_to_timespec64(const struct timespec ts)
 	ret.tv_nsec = ts.tv_nsec;
 	return ret;
 }
-#endif
+#endif /* __BITS_PER_LONG */
 
 static inline void getnstimeofday(struct timespec *ts) {
 	struct timespec64 ts64;
@@ -72,8 +73,9 @@ static inline void getnstimeofday(struct timespec *ts) {
 	ktime_get_real_ts64(&ts64);
 	*ts = timespec64_to_timespec(ts64);
 }
-#endif
-#endif
+#endif /* LINUX_VERSION_CODE */
+#endif /* MTK or NEW_KERNEL_VERSION */
+
 #include "oplus_guard_general.h"
 #include "oplus_secure_harden.h"
 #include "oplus_kevent.h"
@@ -442,34 +444,45 @@ static int __init kretprobe_init(void) {
 	ret = register_kretprobe(&sepolicy_reload_kretprobe);
 	if (ret < 0) {
 		printk("[ROOTCHECK-SR-ERROR]%s:register sepolicy_write_load FAILED.!\n", __func__);
-		return ret;
+		goto sepolicy_reload_kretprobe_failed;
 	}
 	#endif /* CONFIG_OPLUS_FEATURE_SECURE_SRGUARD */
 	#ifdef CONFIG_OPLUS_FEATURE_SECURE_SOCKETGUARD
 	ret = register_kretprobe(&socket_kretprobe);
 	if (ret < 0) {
 		printk("[ROOTCHECK-HS-ERROR]%s:register do_setsocket_opt FAILED.!\n", __func__);
-		return ret;
+		goto socket_kretprobe_failed;
 	}
 	ret = register_kretprobe(&socket_ip6_kretprobe);
 	if (ret < 0) {
 		printk("[ROOTCHECK-HS-ERROR]%s:register do_ip6_setsocket_opt FAILED.!\n", __func__);
-		return ret;
+		goto socket_ip6_kretprobe_failed;
 	}
 	ret = register_kretprobe(&cpuinfo_kretprobe);
 	if (ret < 0) {
 		printk("[ROOTCHECK-HS-ERROR]%s:register func_name_cpu_info FAILED.!\n", __func__);
-		return ret;
+		goto cpuinfo_kretprobe_failed;
 	}
 
 	ret = register_kretprobe(&setxattr_kretprobe);
 	if (ret < 0) {
 		printk("[ROOTCHECK-HS-ERROR]%s:register func_name_setxattr FAILED.!\n", __func__);
-		return ret;
+		goto setxattr_kretprobe_failed;
 	}
 	#endif /* CONFIG_OPLUS_FEATURE_SECURE_SOCKETGUARD */
 	printk("[ROOTCHECK-INFO]%s:secure_harden has been register.\n", __func__);
 	return ret;
+
+setxattr_kretprobe_failed:
+	unregister_kretprobe(&cpuinfo_kretprobe);
+cpuinfo_kretprobe_failed:
+	unregister_kretprobe(&socket_ip6_kretprobe);
+socket_ip6_kretprobe_failed:
+	unregister_kretprobe(&socket_kretprobe);
+socket_kretprobe_failed:
+	unregister_kretprobe(&sepolicy_reload_kretprobe);
+sepolicy_reload_kretprobe_failed:
+	return 0;
 }
 static void __exit kretprobe_exit(void) {
 	#ifdef CONFIG_OPLUS_FEATURE_SECURE_SRGUARD

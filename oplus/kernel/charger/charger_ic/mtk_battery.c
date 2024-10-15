@@ -6786,6 +6786,7 @@ bool meter_fg_30_get_battery_authenticate(void)
 
 static void register_battery_devinfo(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret = 0;
 	char *version;
 	char *manufacture;
@@ -6822,6 +6823,7 @@ static void register_battery_devinfo(void)
 	ret = register_device_proc("battery", version, manufacture);
 	if (ret)
 		pr_err("register_battery_devinfo fail\n");
+#endif
 }
 #endif  /*OPLUS_FEATURE_CHG_BASIC*/
 static int __init battery_init(void)

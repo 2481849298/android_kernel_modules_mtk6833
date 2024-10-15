@@ -14,7 +14,7 @@
 #include "op_wlchg_v2/oplus_chg_wls.h"
 #include "oplus_chg_cfg.h"
 
-static char public_key[] = {
+static char public_auth_code[] = {
 	0x30, 0x82, 0x02, 0x0A, 0x02, 0x82, 0x02, 0x01, 0x00, 0xE3, 0xBF, 0x47, 0xB0, 0x0D, 0xEA, 0xC0,
 	0x45, 0xC0, 0xBF, 0x24, 0x31, 0x9E, 0xEC, 0x64, 0xF8, 0x47, 0xF8, 0x58, 0x96, 0xCF, 0x5E, 0xDE,
 	0xC6, 0xF1, 0x90, 0x26, 0xC9, 0x42, 0xF6, 0x21, 0x40, 0x70, 0x3D, 0x58, 0x26, 0x41, 0x6B, 0x7F,
@@ -50,16 +50,16 @@ static char public_key[] = {
 	0xEF, 0x20, 0x3A, 0x66, 0x09, 0x2C, 0xF9, 0x09, 0x99, 0x02, 0x03, 0x01, 0x00, 0x01
 };
 
-static char public_key_params[] = {
+static char public_auth_code_params[] = {
 	0x05, 0x00
 };
 
-static struct public_key oplus_chg_pkey = {
-	.key = public_key,
-	.keylen = ARRAY_SIZE(public_key),
+static struct public_key oplus_chg_pauth_code = {
+	.key = public_auth_code,
+	.keylen = ARRAY_SIZE(public_auth_code),
 	.algo = OID_rsaEncryption,
-	.params = public_key_params,
-	.paramlen = ARRAY_SIZE(public_key_params),
+	.params = public_auth_code_params,
+	.paramlen = ARRAY_SIZE(public_auth_code_params),
 	.key_is_private = false,
 	.pkey_algo = "rsa",
 };
@@ -131,7 +131,7 @@ int oplus_chg_verify_signature(u8 *s, u32 s_size, u8 *digest, u8 digest_size)
 	sig.hash_algo = "sha256";
 	sig.encoding = "pkcs1";
 
-	return public_key_verify_signature(&oplus_chg_pkey, &sig);
+	return public_key_verify_signature(&oplus_chg_pauth_code, &sig);
 }
 
 int oplus_chg_check_cfg_data(void *buf)

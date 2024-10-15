@@ -21,4 +21,4 @@
 
 void op_log_boot(const char *str);
 
-#endif /*OP_BOOTPROF_H*/
+#endif

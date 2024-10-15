@@ -256,61 +256,61 @@ struct nvt_fw_debug_info {
 };
 
 struct chip_data_nt36672c {
-    bool                            is_sleep_writed;
-    char                            *fw_name;
-    char                            *test_limit_name;
-    struct firmware_headfile        *p_firmware_headfile;
-    tp_dev                          tp_type;
-    uint8_t                         fw_ver;
-    uint8_t                         fw_sub_ver;
-    uint8_t                         recovery_cnt;
-    uint8_t                         ilm_dlm_num;
-    uint8_t                         *fwbuf;
-    uint16_t                        nvt_pid;
-    uint32_t                        ENG_RST_ADDR;
-    uint32_t                        partition;
-    struct spi_device               *s_client;
-    struct hw_resource              *hw_res;
-    struct monitor_data_v2          *monitor_data_v2;
-    struct nvt_ts_trim_id_table     trim_id_table;
-    struct nvt_ts_bin_map           *bin_map;
-    bool                            esd_check_enabled;
-    unsigned long                   irq_timer;
-    uint8_t                         esd_retry;
-    struct device                   *dev;
-    //const struct firmware           *g_fw;
+	bool                            is_sleep_writed;
+	char                            *fw_name;
+	char                            *test_limit_name;
+	struct firmware_headfile        *p_firmware_headfile;
+	tp_dev                          tp_type;
+	uint8_t                         fw_ver;
+	uint8_t                         fw_sub_ver;
+	uint8_t                         recovery_cnt;
+	uint8_t                         ilm_dlm_num;
+	uint8_t                         *fwbuf;
+	uint16_t                        nvt_pid;
+	uint32_t                        ENG_RST_ADDR;
+	uint32_t                        partition;
+	struct spi_device               *s_client;
+	struct hw_resource              *hw_res;
+	struct monitor_data_v2          *monitor_data_v2;
+	struct nvt_ts_trim_id_table     trim_id_table;
+	struct nvt_ts_bin_map           *bin_map;
+	bool                            esd_check_enabled;
+	unsigned long                   irq_timer;
+	uint8_t                         esd_retry;
+	struct device                   *dev;
+	/*const struct firmware           *g_fw;*/
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
 #ifdef CONFIG_SPI_MT65XX
-    struct mtk_chip_config          spi_ctrl;
+	struct mtk_chip_config          spi_ctrl;
 #else
-    struct mt_chip_conf             spi_ctrl;
+	struct mt_chip_conf             spi_ctrl;
 #endif
-#endif // end of CONFIG_TOUCHPANEL_MTK_PLATFORM
-    uint8_t                         touch_direction;    //show touchpanel current direction
-    struct mutex                    mutex_testing;
-    int                             probe_done;
-    bool                            using_headfile;
-    int                             lcd_reset_gpio;
-    struct nvt_fw_debug_info        nvt_fw_debug_info;
-    int irq_num;
-    struct touchpanel_data *ts;
-    u8 *g_fw_buf;
-    size_t g_fw_len;
-    bool g_fw_sta;
-    u8 *fw_buf_dma;
-    bool need_judge_irq_throw;
-    bool spi_fast_read_support;
+#endif /* end of CONFIG_TOUCHPANEL_MTK_PLATFORM*/
+	uint8_t                         touch_direction;    /*show touchpanel current direction*/
+	struct mutex                    mutex_testing;
+	int                             probe_done;
+	bool                            using_headfile;
+	int                             lcd_reset_gpio;
+	struct nvt_fw_debug_info        nvt_fw_debug_info;
+	int irq_num;
+	struct touchpanel_data *ts;
+	u8 *g_fw_buf;
+	size_t g_fw_len;
+	bool g_fw_sta;
+	u8 *fw_buf_dma;
+	bool need_judge_irq_throw;
+	bool spi_fast_read_support;
 #ifdef CONFIG_OPLUS_TP_APK
 
-    bool lock_point_status;
-    bool plug_status;
-    bool debug_mode_sta;
-    bool debug_gesture_sta;
-    bool earphone_sta;
-    bool charger_sta;
-    bool noise_sta;
-    int water_sta;
-#endif //end of CONFIG_OPLUS_TP_APK
+	bool lock_point_status;
+	bool plug_status;
+	bool debug_mode_sta;
+	bool debug_gesture_sta;
+	bool earphone_sta;
+	bool charger_sta;
+	bool noise_sta;
+	int water_sta;
+#endif /*end of CONFIG_OPLUS_TP_APK*/
 };
 
 static int nvt_tp = 0;

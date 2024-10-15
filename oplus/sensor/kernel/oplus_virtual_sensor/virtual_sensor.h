@@ -59,9 +59,20 @@ enum virtual_sensor_handle {
     #ifdef CONFIG_OPLUS_FEATURE_ELEVATOR_DETECT
     elevator_detect,
     #endif //CONFIG_OPLUS_FEATURE_ELEVATOR_DETECT
-#ifdef CONFIG_OPLUS_FEATURE_SENSOR_MONITOR
-    sensor_monitor,
-#endif
+
+        #ifdef CONFIG_OPLUS_FEATURE_SENSOR_MONITOR
+        sensor_monitor,
+        #endif
+
+        #ifdef CONFIG_OPLUS_FEATURE_ROTATION_DETECT
+        rotation_detect,
+        #endif
+        #ifdef CONFIG_OPLUS_FEATURE_BACK_TAP_DETECT
+        back_tap_detect,
+        #endif
+	#ifdef CONFIG_OPLUS_FEATURE_LAY_DETECT
+        lay_detect,
+	#endif
     max_virtual_sensor_support,
 };
 
@@ -130,7 +141,7 @@ int virtual_sensor_driver_add(struct virtual_sensor_init_info *obj, int handle);
 int virtual_sensor_register_control_path(struct virtual_sensor_control_path *ctl,
     int handle);
 
-extern int virtual_sensor_data_report(struct oplus_sensor_event event);
+extern int virtual_sensor_data_report(struct oplus_sensor_event *event);
 extern int virtual_sensor_flush_report(int handle);
 #endif  //__VIRTUAL_SENSOR_H__
 

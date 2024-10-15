@@ -29,6 +29,12 @@ static int selinux_enabled = 1;
 #else
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+unsigned int get_fs(void)
+{
+	return 0;
+}
+#endif
 
 extern int kevent_send_to_user(struct kernel_packet_info *userinfo);
 void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t egid, uid_t callnum)
@@ -118,9 +124,17 @@ void oplus_root_check_post_handler(void *data, struct pt_regs *regs, long ret)
 	struct task_struct * parent_task = NULL;
 #endif /* WHITE_LIST_SUPPORT */
 
-	if ((0 != current->android_kabi_reserved5 ) && (is_unlocked() == 0)){
-		if ((current->android_kabi_reserved5 != current_uid().val) || (current->android_kabi_reserved6 != current_euid().val)  || \
-                    (current->android_kabi_reserved7 != current_gid().val) || (current->android_kabi_reserved8 != current_egid().val)  || (get_fs() > KERNEL_ADDR_LIMIT)){
+	if ((0 != current->android_kabi_reserved5) && (is_unlocked() == 0)) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+		if ((current->android_kabi_reserved5 > current_uid().val) || (current->android_kabi_reserved6 > current_euid().val)\
+					|| (current->android_kabi_reserved7 > current_gid().val)\
+					|| (current->android_kabi_reserved8 > current_egid().val)) {
+#else
+		if ((current->android_kabi_reserved5 > current_uid().val) || (current->android_kabi_reserved6 > current_euid().val)\
+					|| (current->android_kabi_reserved7 > current_gid().val)\
+					|| (current->android_kabi_reserved8 > current_egid().val)\
+					|| (get_fs() > KERNEL_ADDR_LIMIT)) {
+#endif
 			if((scno != __NR_setreuid32) && (scno != __NR_setregid32) && (scno != __NR_setresuid32) && (scno != __NR_setresgid32) && (scno != __NR_setuid32) && (scno != __NR_setgid32)
 				&& (scno != __NR_setreuid) && (scno != __NR_setregid) && (scno != __NR_setresuid) && (scno != __NR_setresgid) && (scno != __NR_setuid) && (scno != __NR_setgid)){
 					#if defined(WHITE_LIST_SUPPORT)

@@ -8,6 +8,9 @@
 
 #include <linux/completion.h>
 #include <linux/mutex.h>
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+#include <oplus_cfg.h>
+#endif
 #ifdef CONFIG_OPLUS_CHG_OOS
 #include <linux/oem/oplus_chg.h>
 #include <linux/oem/oplus_chg_voter.h>
@@ -52,6 +55,7 @@
 #define CAMERA_VOTER		"CAMERA_VOTER"
 #define CALL_VOTER		"CALL_VOTER"
 #define COOL_DOWN_VOTER		"COOL_DOWN_VOTER"
+#define BCC_CURRENT_VOTER	"BCC_CURRENT_VOTER"
 #define RX_IIC_VOTER		"RX_IIC_VOTER"
 #define TIMEOUT_VOTER		"TIMEOUT_VOTER"
 #define CHG_DONE_VOTER		"CHG_DONE_VOTER"
@@ -80,12 +84,12 @@
 #define WLS_TRX_ERR_OTP			BIT(5)
 #define WLS_TRX_ERR_CEPTIMEOUT		BIT(6)
 #define WLS_TRX_ERR_RXEPT		BIT(7)
-#define WLS_TRX_ERR_DEBUG_INFO_MASK	0X7f
+#define WLS_TRX_ERR_DEBUG_INFO_MASK	0x7f
 
 #define WLS_CMD_INDENTIFY_ADAPTER	0xA1
 #define WLS_CMD_INTO_FASTCHAGE		0xA2
-#define WLS_CMD_INTO_USB_CHARGE		0xA3
-#define WLS_CMD_INTO_NORMAL_CHARGE	0xA4
+#define WLS_CMD_GET_VENDOR_ID		0xA3
+#define WLS_CMD_GET_EXTERN_CMD		0xA4
 #define WLS_CMD_SET_NORMAL_MODE		0xA5
 #define WLS_CMD_SET_QUIET_MODE		0xA6
 #define WLS_CMD_SET_LED_BRIGHTNESS	0xAC
@@ -98,16 +102,35 @@
 #define WLS_CMD_GET_ENCRYPT_DATA5	0xB5
 #define WLS_CMD_GET_ENCRYPT_DATA6	0xB6
 
+#define WLS_CMD_GET_PRODUCT_ID		0xC4
+#define WLS_CMD_SEND_BATT_TEMP_SOC	0xC5
+
+#define WLS_CMD_SET_AES_DATA1		0xD1
+#define WLS_CMD_SET_AES_DATA2		0xD2
+#define WLS_CMD_SET_AES_DATA3		0xD3
+#define WLS_CMD_SET_AES_DATA4		0xD4
+#define WLS_CMD_SET_AES_DATA5		0xD5
+#define WLS_CMD_SET_AES_DATA6		0xD6
+#define WLS_CMD_GET_AES_DATA1		0xD7
+#define WLS_CMD_GET_AES_DATA2		0xD8
+#define WLS_CMD_GET_AES_DATA3		0xD9
+#define WLS_CMD_GET_AES_DATA4		0xDA
+#define WLS_CMD_GET_AES_DATA5		0xDB
+#define WLS_CMD_GET_AES_DATA6		0xDC
+
 #define WLS_CMD_GET_TX_ID		0x05
 #define WLS_CMD_GET_TX_PWR		0x4A
 
 #define WLS_MSG_TYPE_EXTENDED_MSG	0x5F
 #define WLS_MSG_TYPE_STANDARD_MSG	0x4F
 
+#define WLS_RESPONE_PRODUCT_ID		0x84
+#define WLS_RESPONE_BATT_TEMP_SOC	0x85
+
 #define WLS_RESPONE_ADAPTER_TYPE	0xF1
 #define WLS_RESPONE_INTO_FASTCHAGE	0xF2
-#define WLS_RESPONE_INTO_USB_CHARGE	0xF3
-#define WLS_RESPONE_INTO_NORMAL_CHARGER	0xF4
+#define WLS_RESPONE_VENDOR_ID		0xF3
+#define WLS_RESPONE_EXTERN_CMD		0xF4
 #define WLS_RESPONE_INTO_NORMAL_MODE	0xF5
 #define WLS_RESPONE_INTO_QUIET_MODE	0xF6
 #define WLS_RESPONE_LED_BRIGHTNESS	0xFC
@@ -121,6 +144,18 @@
 #define WLS_RESPONE_ENCRYPT_DATA4	0xE4
 #define WLS_RESPONE_ENCRYPT_DATA5	0xE5
 #define WLS_RESPONE_ENCRYPT_DATA6	0xE6
+#define WLS_RESPONE_SET_AES_DATA1	0x91
+#define WLS_RESPONE_SET_AES_DATA2	0x92
+#define WLS_RESPONE_SET_AES_DATA3	0x93
+#define WLS_RESPONE_SET_AES_DATA4	0x94
+#define WLS_RESPONE_SET_AES_DATA5	0x95
+#define WLS_RESPONE_SET_AES_DATA6	0x96
+#define WLS_RESPONE_GET_AES_DATA1	0x97
+#define WLS_RESPONE_GET_AES_DATA2	0x98
+#define WLS_RESPONE_GET_AES_DATA3	0x99
+#define WLS_RESPONE_GET_AES_DATA4	0x9A
+#define WLS_RESPONE_GET_AES_DATA5	0x9B
+#define WLS_RESPONE_GET_AES_DATA6	0x9C
 
 #define WLS_ADAPTER_TYPE_MASK		0x07
 #define WLS_ADAPTER_ID_MASK		0xF8
@@ -173,8 +208,11 @@
 #define WLS_VOOC_PWR_MAX_MW		15000
 
 #define WLS_MAX_STEP_CHG_ENTRIES	8
+#define BCC_MAX_STEP_ENTRIES	5
 
 #define WLS_SKIN_TEMP_MAX		500
+
+#define WLS_BCC_STOP_CURR_NUM	5
 
 #define CHARGE_FULL_FAN_THREOD_LO	350
 #define CHARGE_FULL_FAN_THREOD_HI	380
@@ -186,9 +224,12 @@
 #define WLS_ADAPTER_MODEL_2		0x02
 #define WLS_ADAPTER_MODEL_7		0x07
 #define WLS_ADAPTER_MODEL_15		0x0F
+#define WLS_ADAPTER_THIRD_PARTY		0x1F
 
+#define WLS_AUTH_AES_RANDOM_LEN		16
 #define WLS_AUTH_RANDOM_LEN		8
 #define WLS_AUTH_ENCODE_LEN		8
+#define WLS_AUTH_AES_ENCODE_LEN		16
 #define WLS_ENCODE_MASK			3
 
 #define WLS_RECEIVE_POWER_DEFAULT	12000
@@ -196,7 +237,7 @@
 #define WLS_RECEIVE_POWER_PD65W		50000
 
 #define WLS_COOL_DOWN_LEVEL_MAX		32
-#define WLS_BASE_NUM_MAX		16
+#define WLS_BASE_NUM_MAX		32
 #define WLS_TRX_ERR_REASON_LEN	16
 
 #define WLS_QUIET_MODE_UNKOWN	-1
@@ -223,6 +264,7 @@
 #define FAN_PWM_PULSE_IN_SILENT_MODE_THR			(FAN_PWM_PULSE_IN_FASTCHG_MODE_V08_15 - 1)
 
 /*#define WLS_QI_DEBUG*/
+/*#define PM_REG_DEBUG*/
 
 struct oplus_chg_wls;
 
@@ -372,12 +414,23 @@ struct wls_auth_result {
 	u8 encode_num[WLS_AUTH_ENCODE_LEN];
 };
 
+typedef struct {
+	int effc_key_index;
+	u8 aes_random_num[WLS_AUTH_AES_RANDOM_LEN];
+	u8 aes_encode_num[WLS_AUTH_AES_ENCODE_LEN];
+} wls_third_part_auth_result;
+
 struct oplus_chg_wls_status {
 	u8 adapter_type;
 	u8 adapter_id;
+	int vendor_id;
+	bool tx_extern_cmd_done;
+	u32 product_id;
+	u8 aes_key_num;
+	bool verify_by_aes;
 	u8 adapter_power;
 	u8 charge_type;
-	u8 debug_trx_err;
+	bool tx_product_id_done;
 	enum oplus_chg_wls_rx_state current_rx_state;
 	enum oplus_chg_wls_rx_state next_rx_state;
 	enum oplus_chg_wls_rx_state target_rx_state;
@@ -424,6 +477,13 @@ struct oplus_chg_wls_status {
 	int cool_down;
 	bool trx_close_delay;
 #endif
+	int bcc_current;
+	int wls_bcc_max_curr;
+	int wls_bcc_min_curr;
+	int wls_bcc_stop_curr;
+	int bcc_curve_idx;
+	int bcc_true_idx;
+	int bcc_temp_range;
 
 	unsigned long cep_ok_wait_timeout;
 	unsigned long fastchg_retry_timer;
@@ -465,16 +525,20 @@ struct oplus_chg_wls_status {
 	bool chg_done;
 	bool chg_done_quiet_mode;
 
+	bool aes_verity_done;
 	bool verity_pass;
 	bool verity_data_ok;
+	bool aes_verity_data_ok;
 	bool verity_started;
 	bool verity_state_keep;
 	int verity_count;
 	int break_count;
 	u8 trx_err;
 	u8 encrypt_data[WLS_AUTH_RANDOM_LEN];
+	u8 aes_encrypt_data[WLS_AUTH_AES_RANDOM_LEN];
 	struct wls_auth_result verfity_data;
 	unsigned long verity_wait_timeout;
+	wls_third_part_auth_result aes_verfity_data;
 };
 
 #define WLS_MAX_STEP_CHG_ENTRIES	8
@@ -486,6 +550,13 @@ struct oplus_chg_wls_range_data {
 	uint32_t vol_max_mv;
 	int32_t need_wait;
 } __attribute__ ((packed));
+
+struct oplus_chg_wls_bcc_data {
+	uint32_t max_batt_volt;
+	uint32_t max_curr;
+	uint32_t min_curr;
+	int32_t exit;
+}__attribute__((packed));
 
 enum {
 	WLS_FAST_TEMP_0_TO_50,
@@ -510,6 +581,29 @@ enum {
 	OPLUS_WLS_SKEWING_MAX,
 };
 
+enum {
+	WLS_BCC_TEMP_0_TO_50,
+	WLS_BCC_TEMP_50_TO_120,
+	WLS_BCC_TEMP_120_TO_160,
+	WLS_BCC_TEMP_160_TO_400,
+	WLS_BCC_TEMP_400_TO_440,
+	WLS_BCC_TEMP_MAX,
+};
+
+enum {
+	WLS_BCC_STOP_0_TO_30,
+	WLS_BCC_STOP_30_TO_70,
+	WLS_BCC_STOP_70_TO_90,
+	WLS_BCC_STOP_MAX,
+};
+
+enum {
+	WLS_BCC_SOC_0_TO_30,
+	WLS_BCC_SOC_30_TO_70,
+	WLS_BCC_SOC_70_TO_90,
+	WLS_BCC_SOC_MAX,
+};
+
 struct oplus_chg_wls_skin_range_data {
 	int32_t low_threshold;
 	int32_t high_threshold;
@@ -532,6 +626,15 @@ struct oplus_chg_wls_fcc_step {
 struct oplus_chg_wls_fcc_steps {
         struct oplus_chg_wls_fcc_step fcc_step[WLS_FAST_TEMP_MAX];
 } __attribute__((packed));
+
+struct oplus_chg_wls_bcc_step {
+	int max_step;
+	struct oplus_chg_wls_bcc_data bcc_step[BCC_MAX_STEP_ENTRIES];
+}__attribute__((packed));
+
+struct oplus_chg_wls_bcc_steps {
+	struct oplus_chg_wls_bcc_step bcc_step[WLS_BCC_TEMP_MAX];
+}__attribute__((packed));
 
 struct oplus_chg_wls_non_ffc_step {
 	int max_step;
@@ -598,6 +701,9 @@ struct oplus_chg_wls_dynamic_config {
 	int32_t fastchg_max_soc;
 	int32_t cool_down_12v_thr;
 	int32_t verity_curr_max_ma;
+	uint32_t bcc_stop_curr_0_to_30[WLS_BCC_STOP_CURR_NUM];
+	uint32_t bcc_stop_curr_30_to_70[WLS_BCC_STOP_CURR_NUM];
+	uint32_t bcc_stop_curr_70_to_90[WLS_BCC_STOP_CURR_NUM];
 } __attribute__ ((packed));
 
 struct oplus_chg_wls_fod_cal_data {
@@ -617,11 +723,6 @@ struct wls_pwr_table {
 	int t_power;/*watt*/
 };
 
-struct wls_trx_err_reason_table {
-	u8 trx_err;
-	const char reason[WLS_TRX_ERR_REASON_LEN];
-};
-
 struct oplus_chg_wls {
 	struct device *dev;
 	wait_queue_head_t read_wq;
@@ -634,6 +735,7 @@ struct oplus_chg_wls {
 	struct notifier_block wls_changed_nb;
 	struct notifier_block wls_event_nb;
 	struct notifier_block wls_mod_nb;
+	struct notifier_block wls_aes_nb;
 	struct workqueue_struct	*wls_wq;
 	struct delayed_work wls_rx_sm_work;
 	struct delayed_work wls_trx_sm_work;
@@ -655,16 +757,20 @@ struct oplus_chg_wls {
 	struct delayed_work online_keep_remove_work;
 	struct delayed_work verity_state_remove_work;
 	struct delayed_work wls_verity_work;
+	struct delayed_work wls_get_third_part_verity_data_work;
 #ifndef CONFIG_OPLUS_CHG_OOS
 	struct delayed_work wls_clear_trx_work;
 #endif
 	struct delayed_work wls_skewing_work;
+	struct delayed_work wls_bcc_curr_update_work;
+	struct delayed_work wls_vout_err_work;
 	struct wakeup_source *rx_wake_lock;
 	struct wakeup_source *trx_wake_lock;
 	struct mutex connect_lock;
 	struct mutex read_lock;
 	struct mutex cmd_data_lock;
 	struct mutex send_msg_lock;
+	struct mutex update_data_lock;
 
 	struct votable *fcc_votable;
 	struct votable *fastchg_disable_votable;
@@ -683,8 +789,11 @@ struct oplus_chg_wls {
 	struct oplus_chg_wls_status wls_status;
 	struct oplus_chg_wls_static_config static_config;
 	struct oplus_chg_wls_dynamic_config dynamic_config;
+	struct oplus_chg_wls_bcc_step wls_bcc_step;
+	struct oplus_chg_wls_bcc_steps bcc_steps[WLS_BCC_SOC_MAX];
 	struct oplus_chg_wls_fcc_step wls_fcc_step;
 	struct oplus_chg_wls_fcc_steps fcc_steps[WLS_FAST_SOC_MAX];
+	struct oplus_chg_wls_fcc_steps fcc_third_part_steps[WLS_FAST_SOC_MAX];
 	struct oplus_chg_wls_non_ffc_step non_ffc_step[OPLUS_WLS_CHG_MODE_MAX];
 	struct oplus_chg_wls_cv_step cv_step[OPLUS_WLS_CHG_MODE_MAX];
 	struct oplus_chg_wls_cool_down_step cool_down_step[OPLUS_WLS_CHG_MODE_MAX];
@@ -701,6 +810,10 @@ struct oplus_chg_wls {
 	struct oplus_chg_rx_msg rx_msg;
 	struct completion msg_ack;
 	struct wls_dev_cmd cmd;
+
+#if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
+	struct oplus_cfg debug_cfg;
+#endif
 
 	u8 *fw_buf;
 	int fw_size;
@@ -720,6 +833,8 @@ struct oplus_chg_wls {
 	bool support_get_tx_pwr;
 	bool support_epp_plus;
 	bool support_tx_boost;
+	bool support_wls_and_tx_boost;
+	bool support_wls_chg_bcc;
 	bool rx_wake_lock_on;
 	bool trx_wake_lock_on;
 	bool usb_present;
@@ -742,15 +857,15 @@ struct oplus_chg_wls {
 
 	const char *wls_chg_fw_name;
 	int32_t wls_power_mw;
-	oplus_chg_track_trigger trx_err_load_trigger;
-	struct delayed_work trx_err_load_trigger_work;
+	u32 wls_phone_id;
+	unsigned int wls_bcc_fcc_to_icl_factor;
 	oplus_chg_track_trigger trx_info_load_trigger;
 	struct delayed_work trx_info_load_trigger_work;
+	struct mutex track_upload_lock;
+	bool rx_err_uploading;
+	oplus_chg_track_trigger *rx_err_load_trigger;
+	struct delayed_work rx_err_load_trigger_work;
 };
-
-#ifdef CONFIG_OPLUS_CHG_DYNAMIC_CONFIG
-int oplus_chg_wls_set_config(struct oplus_chg_mod *wls_ocm, u8 *buf);
-#endif /* CONFIG_OPLUS_CHG_DYNAMIC_CONFIG */
 
 #ifdef OPLUS_CHG_DEBUG
 ssize_t oplus_chg_wls_upgrade_fw_show(struct device *dev,

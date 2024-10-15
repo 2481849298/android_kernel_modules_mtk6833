@@ -24,9 +24,15 @@
 
 #include "oplus_bq2591x_reg.h"
 #include <mt-plat/upmu_common.h>
+#include <mt-plat/mtk_boot.h>
+#include <linux/version.h>
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 #include <mt-plat/charger_class.h>
 #include <mt-plat/charger_type.h>
-#include <mt-plat/mtk_boot.h>
+#else
+#include <mt-plat/v1/charger_class.h>
+#include <mt-plat/v1/charger_type.h>
+#endif
 
 #include "../../mediatek/charger/mtk_charger_intf.h"
 #include "../oplus_charger.h"
@@ -994,7 +1000,7 @@ int oplus_bq2591x_hardware_init(void)
 int oplus_bq2591x_set_ichg(int cur)
 {
 	u8 ichg;
-	u8 charge_enabled, ret, reg_val = 0;
+	u8 charge_enabled = 0, ret, reg_val = 0;
 
 	dev_info(g_bq->dev, "%s:%d\n", __func__,cur);
 
@@ -1237,7 +1243,7 @@ int oplus_bq2591x_reset_charger(void)
 
 int oplus_bq2591x_is_charging_done(void)
 {
-	bool done;
+	bool done = false;
 	int ret;
 	u8 val;
 

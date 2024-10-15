@@ -19,8 +19,8 @@
 */
 
 #ifndef PHOENIX_BASE_H
-#define PHOENIX_BASE_H
-/*stage kernel*/
+
+//stage kernel
 #define KERNEL_MM_INIT_DONE                               "KERNEL_MM_INIT_DONE"
 #define KERNEL_LOCAL_IRQ_ENABLE                           "KERNEL_LOCAL_IRQ_ENABLE"
 #define KERNEL_DELAYACCT_INIT_DONE                        "KERNEL_DELAYACCT_INIT_DONE"
@@ -29,7 +29,7 @@
 #define KERNEL_DO_BASIC_SETUP_DONE                        "KERNEL_DO_BASIC_SETUP_DONE"
 #define KERNEL_INIT_DONE                                  "KERNEL_INIT_DONE"
 
-/*stage native*/
+//stage native
 #define NATIVE_INIT_START                                 "NATIVE_INIT_START"
 #define NATIVE_INIT_DO_MOUNTALL_START                     "NATIVE_INIT_DO_MOUNTALL_START"
 #define NATIVE_INIT_DO_MOUNTALL_END                       "NATIVE_INIT_DO_MOUNTALL_END"
@@ -52,7 +52,7 @@
 #define NATIVE_VOLD_CRYPTFS_RESTART_INTERNAL_END          "NATIVE_VOLD_CRYPTFS_RESTART_INTERNAL_END"
 #define NATIVE_BOOT_PROGRESS_START                        "NATIVE_BOOT_PROGRESS_START"
 
-/*stage android framework*/
+//stage android framework
 #define ANDROID_ZYGOTE_PRELOAD_START                      "ANDROID_ZYGOTE_PRELOAD_START"
 #define ANDROID_ZYGOTE_PRELOAD_END                        "ANDROID_ZYGOTE_PRELOAD_END"
 #define ANDROID_SYSTEMSERVER_INIT_START                   "ANDROID_SYSTEMSERVER_INIT_START"
@@ -70,7 +70,7 @@
 #define ANDROID_BOOT_COMPLETED                            "ANDROID_BOOT_COMPLETED"
 #define PHOENIX_BOOT_COMPLETED                            "PHOENIX_BOOT_COMPLETED"
 
-/*error*/
+//error
 #define ERROR_HANG_OPLUS                                  "ERROR_HANG_OPLUS"
 #define ERROR_CRITICAL_SERVICE_CRASHED_4_TIMES            "ERROR_CRITICAL_SERVICE_CRASHED_4_TIMES"
 #define ERROR_KERNEL_PANIC                                "ERROR_KERNEL_PANIC"
@@ -80,50 +80,50 @@
 #define ERROR_HWT                                         "ERROR_HWT"
 #define ERROR_HW_REBOOT                                   "ERROR_HW_REBOOT"
 
-/*action*/
+//action
 #define ACTION_SET_BOOTSTAGE                              "SET_BOOTSTAGE"
 #define ACTION_SET_BOOTERROR                              "SET_BOOTERROR"
 #define CMD_STR_MAX_SIZE                                   256
 
-/*signal*/
+//signal
 #define SIGPHX_HANG                                       (SIGRTMIN + 0x11)
 
 #define DO_NOT_RECOVERY                                   0
 #define ONLY_RESTART                                      1
 #define RESTART_AND_RECOVERY                              2
 
-#define PHX_KLOG_ERROR(fmt, args...)\
-        do {                        \
-                printk(KERN_ERR "[PHOENIX] %s: " fmt,        \
-                __func__, ##args);    \
-        } while (0)
+#define PHX_KLOG_ERROR(fmt, args...)                \
+    do {                        \
+        printk(KERN_ERR "[PHOENIX] %s: " fmt,        \
+               __func__, ##args);    \
+    } while (0)
 #define PHX_KLOG_INFO(fmt, args...)                \
-        do {                        \
-                printk(KERN_INFO "[PHOENIX] %s: " fmt,        \
-                __func__, ##args);    \
-        } while (0)
+    do {                        \
+        printk(KERN_INFO "[PHOENIX] %s: " fmt,        \
+               __func__, ##args);    \
+    } while (0)
 
 typedef struct _phx_baseinfo {
-	char stage[96];
-	char error[96];
-	char happen_time[64];
+    char stage[96];
+    char error[96];
+    char happen_time[64];
 } phx_baseinfo;
 
 typedef struct _phx_action_mapping {
-	char action[CMD_STR_MAX_SIZE];
-	void (*map_func)(const char *);
+    char action[CMD_STR_MAX_SIZE];
+    void (*map_func)(const char *);
 } phx_action_mapping;
 
-/* ATTENTION:
-* if phoenix project swithoff these function would evaluate to false
-* so make a if-else condition when use these function
-*/
+// ATTENTION:
+// if phoenix project swithoff these function would evaluate to false
+// so make a if-else condition when use these function
 extern int __weak phx_is_system_boot_completed(void);
 extern int __weak phx_is_phoenix_boot_completed(void);
+extern int __weak phx_is_system_server_init_start(void);
 extern void __weak phx_set_boot_error(const char *error);
 extern void __weak phx_set_boot_stage(const char *stage);
 
-/*for native command deleiver to kernel*/
+//for native command deleiver to kernel
 void phx_monit(const char *monitoring_command);
 
-#endif /*PHOENIX_BASE_H*/
+#endif // !PHOENIX_BASE_H

@@ -47,18 +47,15 @@ static unsigned int oplus_kstat_irqs(unsigned int irq)
 	unsigned int sum = 0;
 	int cpu;
 
-	if (!desc || !desc->kstat_irqs) {
+	if (!desc || !desc->kstat_irqs)
 		return 0;
-	}
-
 	if (!irq_settings_is_per_cpu_devid(desc) &&
-			!irq_settings_is_per_cpu(desc) &&
-			!irq_is_nmi(desc)) {
-		return desc->tot_count;
-	}
+	    !irq_settings_is_per_cpu(desc) &&
+	    !irq_is_nmi(desc))
+	    return desc->tot_count;
 
 	for_each_possible_cpu(cpu)
-	sum += *per_cpu_ptr(desc->kstat_irqs, cpu);
+		sum += *per_cpu_ptr(desc->kstat_irqs, cpu);
 	return sum;
 }
 
@@ -72,9 +69,8 @@ static int init_oplus_watchdog(void)
 {
 	if (!o_irq_counter.irqs_last) {
 		o_irq_counter.irqs_last = (unsigned int *)kzalloc(
-						  sizeof(unsigned int) * MAX_IRQ_NO,
-						  GFP_KERNEL);
-
+						sizeof(unsigned int)*MAX_IRQ_NO,
+						GFP_KERNEL);
 		if (!o_irq_counter.irqs_last) {
 			return -ENOMEM;
 		}
@@ -82,9 +78,8 @@ static int init_oplus_watchdog(void)
 
 	if (!o_irq_counter.irqs_delta) {
 		o_irq_counter.irqs_delta = (unsigned int *)kzalloc(
-						   sizeof(unsigned int) * MAX_IRQ_NO,
-						   GFP_KERNEL);
-
+						sizeof(unsigned int)*MAX_IRQ_NO,
+						GFP_KERNEL);
 		if (!o_irq_counter.irqs_delta) {
 			kfree(o_irq_counter.irqs_last);
 			return -ENOMEM;
@@ -103,9 +98,8 @@ static void update_irq_counter(void)
 
 	BUG_ON(nr_irqs > MAX_IRQ_NO);
 
-	if (!o_irq_counter.irqs_delta || !o_irq_counter.irqs_last) {
+	if (!o_irq_counter.irqs_delta || !o_irq_counter.irqs_last)
 		return;
-	}
 
 	for_each_irq_desc(n, desc) {
 #if IS_MODULE(CONFIG_OPLUS_FEATURE_QCOM_WATCHDOG)
@@ -113,17 +107,13 @@ static void update_irq_counter(void)
 #else
 		irq_count = kstat_irqs(n);
 #endif
-
-		if (!desc->action && !irq_count) {
+		if (!desc->action && !irq_count)
 			continue;
-		}
 
-		if (irq_count <= o_irq_counter.irqs_last[n]) {
+		if (irq_count <= o_irq_counter.irqs_last[n])
 			o_irq_counter.irqs_delta[n] = 0;
-
-		} else {
+		else
 			o_irq_counter.irqs_delta[n] = irq_count - o_irq_counter.irqs_last[n];
-		}
 
 		o_irq_counter.irqs_last[n] = irq_count;
 		all_count += irq_count;
@@ -135,11 +125,9 @@ static void update_irq_counter(void)
 static void insert_irqno(int no, int i, int size)
 {
 	int n;
-
-	for (n = size - 1; n > i; n--) {
-		irqno_sort[n] = irqno_sort[n - 1];
+	for (n = size-1; n > i; n--) {
+		irqno_sort[n] = irqno_sort[n-1];
 	}
-
 	irqno_sort[i] = no;
 }
 
@@ -169,18 +157,12 @@ static void sort_irqs_delta(void)
 static void print_top10_irqs(void)
 {
 	sort_irqs_delta();
-	printk(KERN_INFO
-	       "Top10 irqs since last: %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; Total: %u\n",
-	       irqno_sort[0], o_irq_counter.irqs_delta[irqno_sort[0]], irqno_sort[1],
-	       o_irq_counter.irqs_delta[irqno_sort[1]],
-	       irqno_sort[2], o_irq_counter.irqs_delta[irqno_sort[2]], irqno_sort[3],
-	       o_irq_counter.irqs_delta[irqno_sort[3]],
-	       irqno_sort[4], o_irq_counter.irqs_delta[irqno_sort[4]], irqno_sort[5],
-	       o_irq_counter.irqs_delta[irqno_sort[5]],
-	       irqno_sort[6], o_irq_counter.irqs_delta[irqno_sort[6]], irqno_sort[7],
-	       o_irq_counter.irqs_delta[irqno_sort[7]],
-	       irqno_sort[8], o_irq_counter.irqs_delta[irqno_sort[8]], irqno_sort[9],
-	       o_irq_counter.irqs_delta[irqno_sort[9]], o_irq_counter.all_irqs_delta);
+	printk(KERN_INFO "Top10 irqs since last: %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; %d:%u; Total: %u\n",
+		irqno_sort[0], o_irq_counter.irqs_delta[irqno_sort[0]], irqno_sort[1], o_irq_counter.irqs_delta[irqno_sort[1]],
+		irqno_sort[2], o_irq_counter.irqs_delta[irqno_sort[2]], irqno_sort[3], o_irq_counter.irqs_delta[irqno_sort[3]],
+		irqno_sort[4], o_irq_counter.irqs_delta[irqno_sort[4]], irqno_sort[5], o_irq_counter.irqs_delta[irqno_sort[5]],
+		irqno_sort[6], o_irq_counter.irqs_delta[irqno_sort[6]], irqno_sort[7], o_irq_counter.irqs_delta[irqno_sort[7]],
+		irqno_sort[8], o_irq_counter.irqs_delta[irqno_sort[8]], irqno_sort[9], o_irq_counter.irqs_delta[irqno_sort[9]], o_irq_counter.all_irqs_delta);
 }
 
 void oplus_dump_cpu_online_smp_call(void)
@@ -196,9 +178,9 @@ void oplus_dump_cpu_online_smp_call(void)
 	printk(KERN_INFO "cpu avail mask %s\n", alive_mask_buf);
 	/* print_smp_call_cpu */
 	printk(KERN_INFO "cpu of last smp_call_function_any: %d\n",
-	       smp_call_any_cpu);
+		smp_call_any_cpu);
 	printk(KERN_INFO "cpumask of last smp_call_function_many: 0x%lx\n",
-	       smp_call_many_cpumask);
+		smp_call_many_cpumask);
 }
 EXPORT_SYMBOL(oplus_dump_cpu_online_smp_call);
 
@@ -214,13 +196,11 @@ void oplus_get_cpu_ping_mask(cpumask_t *pmask, int *cpu_idle_pc_state)
 	cpumask_copy(&avail_mask, cpu_online_mask);
 #endif
 	for_each_cpu(cpu, cpu_online_mask) {
-		if (cpu_idle_pc_state[cpu] || cpu_isolated(cpu)) {
+		if (cpu_idle_pc_state[cpu] || cpu_isolated(cpu))
 			cpumask_clear_cpu(cpu, pmask);
-		}
 	}
-	printk(KERN_INFO
-	       "[wdog_util]cpu avail mask: 0x%lx; ping mask: 0x%lx; irqs since last: %u\n",
-	       *cpumask_bits(&avail_mask), *cpumask_bits(pmask), o_irq_counter.all_irqs_delta);
+	printk(KERN_INFO "[wdog_util]cpu avail mask: 0x%lx; ping mask: 0x%lx; irqs since last: %u\n",
+		*cpumask_bits(&avail_mask), *cpumask_bits(pmask), o_irq_counter.all_irqs_delta);
 }
 EXPORT_SYMBOL(oplus_get_cpu_ping_mask);
 
@@ -239,20 +219,14 @@ void oplus_dump_wdog_cpu(struct task_struct *w_task)
 #else
 	wdog_busy = task_curr(w_task);
 #endif
-
-	if (wdog_busy) {
+	if (wdog_busy)
 		printk(KERN_EMERG "Watchdog work is running at CPU(%d)\n", work_cpu);
-
-	} else {
+	else
 		printk(KERN_EMERG "Watchdog work is pending at CPU(%d)\n", work_cpu);
-	}
 
 #if IS_BUILTIN(CONFIG_OPLUS_FEATURE_QCOM_WATCHDOG)
-
-	if (regs) {
+	if (regs)
 		show_regs(regs);
-	}
-
 #endif
 }
 EXPORT_SYMBOL(oplus_dump_wdog_cpu);
@@ -264,15 +238,12 @@ void oplus_show_utc_time(void)
 {
 	struct timespec ts;
 	struct rtc_time tm;
-
-	if (oplus_print_utc_cnt > 2) {
+	if(oplus_print_utc_cnt > 2)
 		oplus_print_utc_cnt = 0;
-
-	} else {
-		oplus_print_utc_cnt++;
+	else {
+		oplus_print_utc_cnt ++;
 		return;
 	}
-
 	getnstimeofday(&ts);
 	rtc_time_to_tm(ts.tv_sec, &tm);
 	pr_warn("!@WatchDog: %d-%02d-%02d %02d:%02d:%02d.%09lu UTC\n",
@@ -286,7 +257,6 @@ static int __init oplus_wd_init(void)
 	int ret = 0;
 
 	ret = init_oplus_watchdog();
-
 	if (ret != 0) {
 		pr_err("Failed to init oplus watchlog");
 	}

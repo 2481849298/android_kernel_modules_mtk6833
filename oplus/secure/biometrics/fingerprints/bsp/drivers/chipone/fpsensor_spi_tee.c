@@ -85,8 +85,8 @@ static void spidev_gpio_as_int(fpsensor_data_t *fpsensor)
 */
 
 static struct of_device_id Chipone_match_table[] = {
-    { .compatible = "mediatek,finger-fp",},
-    {},
+	{ .compatible = "mediatek,finger-fp",},
+	{},
 };
 
 static int fpsensor_irq_gpio_cfg(fpsensor_data_t *fpsensor)
@@ -101,15 +101,15 @@ static int fpsensor_irq_gpio_cfg(fpsensor_data_t *fpsensor)
    // spidev_gpio_as_int(fpsensor);
 
 
-    node = of_find_matching_node(NULL, Chipone_match_table);
+	node = of_find_matching_node(NULL, Chipone_match_table);
 
-    if (node){
-        fpsensor->irq = irq_of_parse_and_map(node, 0);
-        fpsensor_debug(ERR_LOG,"fp_irq number %d\n", fpsensor->irq);
-    }else{
-        fpsensor_debug(ERR_LOG,"node = of_find_matching_node fail error  \n");
-        return -EINVAL;
-    }
+	if (node){
+		fpsensor->irq = irq_of_parse_and_map(node, 0);
+		fpsensor_debug(ERR_LOG,"fp_irq number %d\n", fpsensor->irq);
+	}else{
+		fpsensor_debug(ERR_LOG,"node = of_find_matching_node fail error  \n");
+		return -EINVAL;
+	}
     if (CHIPONE_LDO_DISABLE == 1) {
         int ret = 0;
         fpsensor->fp_irq = pinctrl_lookup_state(fpsensor->pinctrl1, "irq-init");
@@ -173,26 +173,26 @@ void fpsensor_power_onoff(int enable)
 
     if(enable && onoff_cnt)
    {
-        if (CHIPONE_LDO_DISABLE == 1){
-            fpsensor_debug(ERR_LOG, "power on,onoff_cnt=%d\n",onoff_cnt);
-            pinctrl_select_state(g_fpsensor->pinctrl1, g_fpsensor->fp_pwr_high);
-        }
-        if ((finger_regulator != NULL) && (CHIPONE_LDO_DISABLE == 0)){
-            fpsensor_debug(ERR_LOG, "finger_regulator power on\n");
-            regulator_enable(finger_regulator);
-        }
+		if (CHIPONE_LDO_DISABLE == 1){
+			fpsensor_debug(ERR_LOG, "power on,onoff_cnt=%d\n",onoff_cnt);
+			pinctrl_select_state(g_fpsensor->pinctrl1, g_fpsensor->fp_pwr_high);
+		}
+		if ((finger_regulator != NULL) && (CHIPONE_LDO_DISABLE == 0)){
+			fpsensor_debug(ERR_LOG, "finger_regulator power on\n");
+			regulator_enable(finger_regulator);
+		}
       onoff_cnt=0;
     }
     else if ((!enable)  && (!onoff_cnt))
    {
-        if (CHIPONE_LDO_DISABLE == 1){
-            fpsensor_debug(ERR_LOG, "power off,onoff_cnt=%d\n",onoff_cnt);
-            pinctrl_select_state(g_fpsensor->pinctrl1, g_fpsensor->fp_pwr_low);
-        }
-        if ((finger_regulator != NULL) && (CHIPONE_LDO_DISABLE == 0)){
-            fpsensor_debug(ERR_LOG, "finger_regulator power off\n");
-            regulator_force_disable(finger_regulator);
-        }
+		if (CHIPONE_LDO_DISABLE == 1){
+			fpsensor_debug(ERR_LOG, "power off,onoff_cnt=%d\n",onoff_cnt);
+			pinctrl_select_state(g_fpsensor->pinctrl1, g_fpsensor->fp_pwr_low);
+		}
+		if ((finger_regulator != NULL) && (CHIPONE_LDO_DISABLE == 0)){
+			fpsensor_debug(ERR_LOG, "finger_regulator power off\n");
+			regulator_force_disable(finger_regulator);
+		}
        onoff_cnt=1;
 
     }
@@ -282,8 +282,8 @@ int fpsensor_spidev_dts_init(fpsensor_data_t *fpsensor)
             fpsensor_debug(ERR_LOG, "fpsensor Cannot find fp pinctrl fp_rst_high!\n");
             return ret;
         }
-
-        fpsensor->fp_cs_mode = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_cs_mode");
+		
+		fpsensor->fp_cs_mode = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_cs_mode");
         if (IS_ERR(fpsensor->fp_cs_mode)) {
             ret = PTR_ERR(fpsensor->fp_cs_mode);
             fpsensor_debug(ERR_LOG, "fpsensor Cannot find fp pinctrl fp_cs_mode!\n");
@@ -304,7 +304,7 @@ int fpsensor_spidev_dts_init(fpsensor_data_t *fpsensor)
             //return ret;
         }
 
-        fpsensor->fp_spi_mi = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_miso");
+		fpsensor->fp_spi_mi = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_miso");
         if (IS_ERR(fpsensor->fp_spi_mi)) {
             ret = PTR_ERR(fpsensor->fp_spi_mi);
             fpsensor_debug(ERR_LOG, "fpsensor Cannot find fp pinctrl fp_spi_mi!\n");
@@ -332,7 +332,7 @@ int fpsensor_spidev_dts_init(fpsensor_data_t *fpsensor)
             //return ret;
         }
 
-        fpsensor->fp_cs_low = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_cs_low");
+		fpsensor->fp_cs_low = pinctrl_lookup_state(fpsensor->pinctrl1, "fpsensor_finger_cs_low");
         if (IS_ERR(fpsensor->fp_cs_low)) {
             ret = PTR_ERR(fpsensor->fp_cs_low);
             fpsensor_debug(ERR_LOG, "fpsensor Cannot find fp pinctrl fp_cs_low!\n");
@@ -371,7 +371,7 @@ static void fpsensor_spi_clk_enable(u8 bonoff)
     if ((bonoff == 0) && (clk_onoff_cnt == 0)) {
         //fpsensor_spi_mode_enable(0);
         mt_spi_disable_master_clk(g_fpsensor->spi);
-        fpsensor_spi_mode_enable(0);
+		fpsensor_spi_mode_enable(0);
         clk_onoff_cnt = 1;
     } else if((bonoff == 1) && (clk_onoff_cnt == 1)){
         fpsensor_spi_mode_enable(1);
@@ -472,39 +472,39 @@ static long fpsensor_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
     switch (cmd) {
     case FPSENSOR_IOC_INIT:
         fpsensor_debug(INFO_LOG, "%s: fpsensor init started======\n", __func__);
-        if(free_irq_flag == 0) {
+		if(free_irq_flag == 0) {
         if (CHIPONE_LDO_DISABLE == 1)
             fpsensor_power_onoff(1);
 
-            retval = fpsensor_spidev_dts_init(fpsensor_dev);
-            if (retval) {
-                break;
-            }
-            if(fpsensor_irq_gpio_cfg(fpsensor_dev) != 0) {
-                break;
-            }
+	        retval = fpsensor_spidev_dts_init(fpsensor_dev);
+	        if (retval) {
+	            break;
+	        }
+	        if(fpsensor_irq_gpio_cfg(fpsensor_dev) != 0) {
+	            break;
+	        }
         //regist irq
-            irqf = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
-            retval = request_threaded_irq(fpsensor_dev->irq, fpsensor_irq, NULL,
-                                          irqf, FPSENSOR_DEV_NAME, fpsensor_dev);
-            if (retval == 0) {
-                fpsensor_debug(INFO_LOG, " irq thread reqquest success!\n");
-                free_irq_flag = 1;
-            } else {
-                fpsensor_debug(ERR_LOG, " irq thread request failed , retval =%d \n", retval);
-                break;
-            }
-            enable_irq_wake(g_fpsensor->irq);
-            fpsensor_dev->device_available = 1;
-            // fix Unbalanced enable for IRQ, disable irq at first
-            fpsensor_dev->irq_enabled = 1;
-            fpsensor_disable_irq(fpsensor_dev);
-        }
+	        irqf = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
+	        retval = request_threaded_irq(fpsensor_dev->irq, fpsensor_irq, NULL,
+	                                      irqf, FPSENSOR_DEV_NAME, fpsensor_dev);
+	        if (retval == 0) {
+	            fpsensor_debug(INFO_LOG, " irq thread reqquest success!\n");
+				free_irq_flag = 1;
+	        } else {
+	            fpsensor_debug(ERR_LOG, " irq thread request failed , retval =%d \n", retval);
+	            break;
+	        }
+	        enable_irq_wake(g_fpsensor->irq);
+	        fpsensor_dev->device_available = 1;
+	        // fix Unbalanced enable for IRQ, disable irq at first
+	        fpsensor_dev->irq_enabled = 1;
+	        fpsensor_disable_irq(fpsensor_dev);
+		}
         fpsensor_debug(INFO_LOG, "%s: fpsensor init finished======\n", __func__);
         break;
 
     case FPSENSOR_IOC_EXIT:
-/*
+/*	
         fpsensor_disable_irq(fpsensor_dev);
         if (fpsensor_dev->irq) {
             free_irq(fpsensor_dev->irq, fpsensor_dev);
@@ -557,7 +557,7 @@ static long fpsensor_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
         fpsensor_power_onoff(0);
         break;
     case FPSENSOR_IOC_REMOVE:
-/*
+	/*
         fpsensor_disable_irq(fpsensor_dev);
         if (fpsensor_dev->irq) {
             free_irq(fpsensor_dev->irq, fpsensor_dev);
@@ -909,14 +909,14 @@ static int fpsensor_probe(struct platform_device *spi)
             goto release_drv_data;
         }
 
-        //pmic_register_interrupt_callback(INT_VMCH_OC,vmch_power_off);
+    //	pmic_register_interrupt_callback(INT_VMCH_OC,vmch_power_off);
 
         status = regulator_set_voltage(finger_regulator, 3300000, 3300000);
         printk(KERN_ERR "%s, regulator_set_voltage err %d!\n", __func__,status);
         status = regulator_enable(finger_regulator);
         printk(KERN_ERR "%s, regulator_enable err %d!\n", __func__,status);
 
-        //pmic_enable_interrupt(INT_VMCH_OC, 1, "vmch");
+    //	pmic_enable_interrupt(INT_VMCH_OC, 1, "vmch");
     }
         printk(KERN_ERR, "%s finished, driver version: %s\n", __func__, FPSENSOR_SPI_VERSION);
     goto out;
@@ -1004,6 +1004,7 @@ static int __init fpsensor_init(void)
     }
     printk("%s,Need to register chipone driver",__func__);
 
+	
 #if defined(USE_PLATFORM_BUS)
     status = platform_driver_register(&fpsensor_plat_driver);
 #elif defined(USE_SPI_BUS)

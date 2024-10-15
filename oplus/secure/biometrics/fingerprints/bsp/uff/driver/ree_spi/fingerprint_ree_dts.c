@@ -224,7 +224,7 @@ int fp_parse_dts(struct spidev_data *dev)
     dev->pstate_default = NULL;
     dev->pstate_cs_func = NULL;
     dev->pstate_irq_no_pull = NULL;
-    dev->is_optical = true;
+    dev->is_optical = false;
     g_cs_gpio_disable = 0;
     node = of_find_compatible_node(NULL, NULL, "goodix,goodix_fp");
 
@@ -275,13 +275,20 @@ int fp_parse_dts(struct spidev_data *dev)
         }
         pinctrl_select_state(dev->pinctrl, dev->pstate_default);
     } else {
-        dev->pstate_irq_no_pull = pinctrl_lookup_state(dev->pinctrl, "goodix_irq_no_pull");
+        dev->pstate_irq_no_pull = pinctrl_lookup_state(dev->pinctrl, "gf_spi_drive_6mA");
         if (IS_ERR(dev->pstate_irq_no_pull)) {
             dev_err(&pdev->dev, "Can't find irq_no_pull pinctrl state\n");
-            // return PTR_ERR(dev->pstate_irq_no_pull);
+            return PTR_ERR(dev->pstate_irq_no_pull);
         } else {
             pinctrl_select_state(dev->pinctrl, dev->pstate_irq_no_pull);
         }
+
+        dev->pstate_default = pinctrl_lookup_state(dev->pinctrl, "default");
+        if (IS_ERR(dev->pstate_default)) {
+            dev_err(&pdev->dev, "Can't find default pinctrl state\n");
+            return PTR_ERR(dev->pstate_default);
+        }
+        pinctrl_select_state(dev->pinctrl, dev->pstate_default);
     }
 
     /*get reset resource*/

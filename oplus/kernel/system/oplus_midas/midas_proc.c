@@ -51,8 +51,7 @@ struct rasm_data {
 	long last_resume_time;
 };
 
-static int rasm_resume(struct device *dev)
-{
+static int rasm_resume(struct device *dev) {
 	struct timeval resume_time;
 	struct rasm_data *data;
 
@@ -70,8 +69,7 @@ static int rasm_resume(struct device *dev)
 	return 0;
 }
 
-static int rasm_suspend(struct device *dev)
-{
+static int rasm_suspend(struct device *dev) {
 	struct timeval suspend_time;
 	struct rasm_data *data;
 
@@ -86,12 +84,10 @@ static int rasm_probe(struct platform_device *pdev)
 {
 	struct rasm_data *data;
 	data = devm_kzalloc(&pdev->dev, sizeof(struct rasm_data), GFP_KERNEL);
-
 	if (data == NULL) {
 		dev_err(&pdev->dev, "devm_kzalloc failed!");
 		return -1;
 	}
-
 	dev_set_drvdata(&pdev->dev, data);
 	return 0;
 }
@@ -117,8 +113,8 @@ struct of_device_id of_tbl[] = {
 };
 
 struct platform_device dev = {
-	.id = -1,
-	.name = "rasm",
+.id = -1,
+.name = "rasm",
 };
 
 static struct platform_driver drv = {
@@ -137,7 +133,7 @@ static struct platform_driver drv = {
 static int midas_proc_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	if (remap_vmalloc_range(vma, g_midas_data,
-				vma->vm_pgoff)) {
+		  vma->vm_pgoff)) {
 		pr_err("remap failed\n");
 		return -EAGAIN;
 	}
@@ -146,34 +142,29 @@ static int midas_proc_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 static ssize_t midas_proc_write(struct file *file, const char __user *buf,
-				size_t cnt, loff_t *offset)
+		size_t cnt, loff_t *offset)
 {
 	int ret, len, type;
 	char tmp[BUF_LEN + 1];
 	unsigned long flags;
 
-	if (cnt == 0) {
+	if (cnt == 0)
 		return 0;
-	}
 
 	len = cnt > BUF_LEN ? BUF_LEN : cnt;
 
 	ret = copy_from_user(tmp, buf, len);
-
 	if (ret) {
 		pr_err("copy_from_user failed, ret=%d\n", ret);
 		return -EFAULT;
 	}
 
-	if (tmp[len - 1] == '\n') {
+	if (tmp[len - 1] == '\n')
 		tmp[len - 1] = '\0';
-
-	} else {
+	else
 		tmp[len] = '\0';
-	}
 
 	ret = sscanf(tmp, "%d", &type);
-
 	if (ret < 1) {
 		pr_err("write failed, ret=%d\n", ret);
 		return -EINVAL;
@@ -185,49 +176,40 @@ static ssize_t midas_proc_write(struct file *file, const char __user *buf,
 	}
 
 	spin_lock_irqsave(&midas_data_lock, flags);
-
-	if (type == TYPE_UID) {
+	if (type == TYPE_UID)
 		midas_get_uid_state(g_midas_data);
-
-	} else {
+	else
 		midas_get_pid_state(g_midas_data, type);
-	}
-
 	spin_unlock_irqrestore(&midas_data_lock, flags);
 
 	return cnt;
 }
 
 static ssize_t midas_proc_pname_write(struct file *file, const char __user *buf,
-				      size_t cnt, loff_t *offset)
+		size_t cnt, loff_t *offset)
 {
 	int ret, len, pid;
 	char tmp[BUF_LEN + 1];
 	struct task_struct *p;
 	unsigned long flags;
 
-	if (cnt == 0) {
+	if (cnt == 0)
 		return 0;
-	}
 
 	len = cnt > BUF_LEN ? BUF_LEN : cnt;
 
 	ret = copy_from_user(tmp, buf, len);
-
 	if (ret) {
 		pr_err("copy_from_user failed, ret=%d\n", ret);
 		return -EFAULT;
 	}
 
-	if (tmp[len - 1] == '\n') {
+	if (tmp[len - 1] == '\n')
 		tmp[len - 1] = '\0';
-
-	} else {
+	else
 		tmp[len] = '\0';
-	}
 
 	ret = sscanf(tmp, "%d", &pid);
-
 	if (ret < 1) {
 		pr_err("write failed, ret=%d\n", ret);
 		return -EINVAL;
@@ -236,10 +218,8 @@ static ssize_t midas_proc_pname_write(struct file *file, const char __user *buf,
 	spin_lock_irqsave(&midas_pname_lock, flags);
 
 	p = find_task_by_vpid(pid);
-
-	if (!IS_ERR_OR_NULL(p)) {
+	if (!IS_ERR_OR_NULL(p))
 		strncpy(g_midas_pname, p->comm, TASK_COMM_LEN);
-	}
 
 	spin_unlock_irqrestore(&midas_pname_lock, flags);
 
@@ -254,6 +234,7 @@ static int midas_pname_proc_show(struct seq_file *m, void *v)
 
 static int midas_proc_pname_open(struct inode *inode, struct file *file)
 {
+
 	return single_open(file, midas_pname_proc_show, NULL);
 }
 
@@ -274,13 +255,12 @@ static int __init midas_proc_init(void)
 	int ret = 0;
 
 	g_midas_pentry = proc_create("midas_time_in_state",
-				     0660, NULL, &proc_midas_fops);
+				0660, NULL, &proc_midas_fops);
 
 	g_midas_pname_pentry = proc_create("midas_pname",
-					   0660, NULL, &proc_midas_pname_fops);
+				0660, NULL, &proc_midas_pname_fops);
 
 	g_midas_data = vmalloc_user(sizeof(struct midas_id_state));
-
 	if (IS_ERR_OR_NULL(g_midas_data)) {
 		pr_err("malloc failed!\n");
 		ret = -ENOMEM;
@@ -288,27 +268,24 @@ static int __init midas_proc_init(void)
 	}
 
 	ret = platform_device_register(&dev);
-
 	if (ret < 0) {
 		dev_err(&dev.dev, "platform_device_register failed!");
 		return ret;
 	}
-
 	ret = platform_driver_register(&drv);
-
 	if (ret < 0) {
 		dev_err(&dev.dev, "platform_driver_register!");
 		goto err_register_driver;
 	}
 
-	/*create dispcap dev*/
-	if (dispcap_dev_init() < 0) {
+	// create dispcap dev
+	if(dispcap_dev_init() < 0) {
 		ret = -ENOMEM;
 		goto err_malloc;
 	}
 
-	/*create vpu pw_off_latency_proc*/
-	if (vpu_pw_off_latency_proc_init() < 0) {
+	// create vpu pw_off_latency_proc
+	if(vpu_pw_off_latency_proc_init() < 0) {
 		ret = -ENOMEM;
 		goto err_malloc;
 	}

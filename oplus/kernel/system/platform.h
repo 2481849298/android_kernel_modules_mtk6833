@@ -18,4 +18,4 @@
 */
 bool arch_of(const char *arch);
 
-#endif /*__PLATFORM_H__*/
+#endif

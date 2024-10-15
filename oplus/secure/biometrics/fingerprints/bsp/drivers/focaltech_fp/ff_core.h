@@ -107,8 +107,8 @@ typedef struct {
     struct work_struct event_work;
     wait_queue_head_t wait_queue_head;
 
-    struct wakeup_source wake_lock;
-    struct wakeup_source wake_lock_ctl;
+    struct wake_lock wake_lock;
+    struct wake_lock wake_lock_ctl;
 
 #if defined(CONFIG_FB)
     struct notifier_block fb_notif;
@@ -121,6 +121,14 @@ typedef struct {
     struct pinctrl_state *pins_irq_as_int;
     struct pinctrl_state *pins_power_low;
     struct pinctrl_state *pins_power_high;
+    struct pinctrl_state *pins_spi_cs_mode;
+    struct pinctrl_state *pins_spi_clk;
+    struct pinctrl_state *pins_spi_mosi;
+    struct pinctrl_state *pins_spi_miso;
+    struct pinctrl_state *pins_spi_clk_low;
+    struct pinctrl_state *pins_spi_mosi_low;
+    struct pinctrl_state *pins_spi_miso_low;
+    struct pinctrl_state *pins_spi_cs_low;
 
     ff_event_t event_type;
     ff_poll_event_t poll_event;
@@ -211,11 +219,11 @@ typedef struct {
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-extern ff_context_t *g_ff_ctx;
+
 
 /*#ifdef CONFIG_FINGERPRINT_FOCALTECH_SPI_SUPPORT */
 int ff_spi_init(void);
 void ff_spi_exit(void);
-/*#endif */
+// #endif
 
 #endif /* __FF_CORE_H__ */

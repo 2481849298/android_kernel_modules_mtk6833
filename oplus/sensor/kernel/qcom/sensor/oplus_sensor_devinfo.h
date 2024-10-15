@@ -17,7 +17,7 @@
 
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <soc/oplus/system/oplus_project.h>
+#include <soc/oplus/boot/oplus_project.h>
 #define SENSOR_DEVINFO_SYNC_TIME  10000 //10s
 
 //SMEM_SENSOR = SMEM_VERSION_FIRST + 23,
@@ -26,7 +26,8 @@
 #define REG_NUM 10
 #define PARAMETER_NUM 25
 #define FEATURE_NUM 10
-#define SOURCE_NUM 3
+#define SOURCE_NUM 2
+#define PANEL_SOURCE_NUM 2
 #define ALGO_PARAMETER_NUM 15
 #define ALGO_FEATURE_NUM  5
 #define DEFAULT_CONFIG 0xff
@@ -52,6 +53,7 @@ enum sensor_id {
     OPLUS_BAROMETER,
     OPLUS_SARS,
     OPLUS_LIGHT_REAR,
+    OPLUS_PAD_LIGHT,
     SENSORS_NUM
 };
 
@@ -73,6 +75,11 @@ enum  {
     TCS3408 = 0x04,
     STK3A6X = 0x08,
     STK3329 = 0x10,
+    TCS3720 = 0x40,
+};
+
+enum {
+	PAD_LIGHT_TCS3720 = 0x01,
 };
 
 enum {
@@ -156,6 +163,10 @@ struct oplus_als_cali_data {
     struct proc_dir_entry   *proc_oplus_als;
 };
 
+struct sns_display_info {
+	char *als_supt_cmdline[PANEL_SOURCE_NUM];
+	char *pad_light_supt_cmdline[PANEL_SOURCE_NUM];
+};
 
 typedef enum {
     NORMAL = 0x01,

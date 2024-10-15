@@ -30,13 +30,11 @@ static bool arch_of_mtk(void)
 
 bool arch_of(const char *arch)
 {
-	if (!strncasecmp(arch, "qcom", strlen("qcom"))) {
+	if (!strncasecmp(arch, "qcom", strlen("qcom")))
 		return arch_of_qcom();
-	}
 
-	if (!strncasecmp(arch, "mtk", strlen("mtk"))) {
+	if (!strncasecmp(arch, "mtk", strlen("mtk")))
 		return arch_of_mtk();
-	}
 
 	BUG();
 

@@ -8,12 +8,14 @@
 #include <linux/kobject.h>
 #include <linux/ratelimit.h>
 #include <linux/blkdev.h>
+#include <linux/cgroup.h>
 #ifdef CONFIG_OPLUS_MEM_MONITOR
 #include <linux/healthinfo/memory_monitor.h>
 #endif
 #ifdef OPLUS_FEATURE_SDCARD_INFO
 #include "../../../drivers/mmc/host/sdInfo/sdinfo.h"
 #endif
+#include <linux/sched_assist/sched_assist_common.h>
 #include <linux/ktime.h>
 #include <linux/seq_file.h>
 #ifdef CONFIG_PROCESS_RECLAIM_ENHANCE
@@ -23,10 +25,12 @@
 #ifdef CONFIG_OPLUS_HEALTHINFO_CPUFREQ_MAX
 #include <linux/cpufreq.h>
 #endif
+#include <linux/time64.h>
+#include <linux/timekeeping.h>
 
 #define BUFFER_SIZE_S 256
 #define BUFFER_SIZE_M 512
-#define BUFFER_SIZE_L 1024
+#define BUFFER_SIZE_L 2048
 
 #ifdef OPLUS_FEATURE_SCHED_ASSIST
 extern bool test_task_ux(struct task_struct *task);
@@ -55,7 +59,9 @@ static char *sched_list[OHM_TYPE_TOTAL] = {
 	"io_panic",
 	"svm_monitor",
 	"rlimit_monitor",
-	"ionwait_monitor"
+	"ionwait_monitor",
+	"mem_vma_alloc_err",
+	"blk_monitor"
 };
 
 /******  Action  ******/
@@ -67,6 +73,33 @@ static char *ohm_detect_env[MAX_OHMEVENT_PARAM] = { "OHMACTION=uevent", NULL };
 
 static bool ohm_action_ctrl = false;
 static char msg_buf[OH_MSG_LEN] = { 0 };
+
+#if IS_ENABLED(CONFIG_CGROUP_SCHED)
+static inline int get_task_cgroup_id(struct task_struct *task)
+{
+	struct cgroup_subsys_state *css = task_css(task, cpu_cgrp_id);
+
+	return css ? css->id : -1;
+}
+#else
+inline int get_task_cgroup_id(struct task_struct *task) { return 0; }
+#endif
+
+#if  IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+/* todo add ux type */
+#endif
+static int test_task_top_app(struct task_struct *task)
+{
+	return (SA_CGROUP_TOP_APP == get_task_cgroup_id(task)) ? 1 : 0;
+}
+static int test_task_sys_bg(struct task_struct *task)
+{
+	 return (SA_CGROUP_SYS_BACKGROUND == get_task_cgroup_id(task)) ? 1 : 0;
+}
+static int test_task_bg(struct task_struct *task)
+{
+	return (SA_CGROUP_BACKGROUND == get_task_cgroup_id(task)) ? 1 : 0;
+}
 
 void ohm_action_trig(int type)
 {
@@ -165,13 +198,51 @@ static inline void ohm_sched_stat_record_common(struct sched_stat_para *sched_st
 	}
 }
 
-void ohm_schedstats_record(int sched_type, struct task_struct *task,
-			   u64 delta_ms)
+static inline void _ohm_para_init(struct sched_stat_para *sched_para)
+{
+	sched_para->delta_ms = 0;
+	memset(&sched_para->all, 0, sizeof(struct sched_stat_common));
+	memset(&sched_para->ux, 0, sizeof(struct sched_stat_common));
+	memset(&sched_para->fg, 0, sizeof(struct sched_stat_common));
+	memset(&sched_para->top, 0, sizeof(struct sched_stat_common));
+	memset(&sched_para->bg, 0, sizeof(struct sched_stat_common));
+	memset(&sched_para->sysbg, 0, sizeof(struct sched_stat_common));
+}
+
+static inline int oplus_get_im_flag(struct task_struct *task)
+{
+#ifdef CONFIG_OPLUS_FEATURE_IM
+	return task->im_flag;
+#else
+	return IM_FLAG_NONE;
+#endif
+}
+
+static inline void clear_health_date(struct task_struct *p, struct sched_stat_para *sched_para)
+{
+	int im_flag = IM_FLAG_NONE;
+
+	if (p && p->group_leader)
+		im_flag = oplus_get_im_flag(p->group_leader);
+	if (im_flag == IM_FLAG_MIDASD)
+		 _ohm_para_init(sched_para);
+}
+
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+extern bool test_task_ux(struct task_struct *task);
+#endif
+void ohm_schedstats_record(int sched_type, struct task_struct *task, u64 delta_ms)
 {
 	struct sched_stat_para *sched_stat = &sched_para[sched_type];
-	static DEFINE_RATELIMIT_STATE(ratelimit, 60 * HZ, 1);
+	static DEFINE_RATELIMIT_STATE(ratelimit, 60*HZ, 1);
+	unsigned long flags;
+	struct long_wait_record *plwr;
+	struct timespec64 ts;
+	u32 index;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	if (unlikely(!sched_stat->ctrl)) {
+		spin_unlock_irqrestore(&sched_stat->lock, flags);
 		return;
 	}
 
@@ -198,6 +269,28 @@ void ohm_schedstats_record(int sched_type, struct task_struct *task,
 					     delta_ms);
 	}
 #endif
+	if (test_task_top_app(task)) {
+		ohm_sched_stat_record_common(sched_stat, &sched_stat->top, delta_ms);
+	}
+	if (test_task_bg(task)) {
+		ohm_sched_stat_record_common(sched_stat, &sched_stat->bg, delta_ms);
+	}
+	if (test_task_sys_bg(task)) {
+		ohm_sched_stat_record_common(sched_stat, &sched_stat->sysbg, delta_ms);
+	}
+
+	if (unlikely(delta_ms >= sched_stat->low_thresh_ms)) {
+		index = (u32)atomic_inc_return(&sched_stat->lwr_index);
+		plwr = &sched_stat->last_n_lwr[index & LWR_MASK];
+		plwr->pid = (u32)task->pid;
+
+		ktime_get_real_ts64(&ts);
+		plwr->timestamp = (u64)ts.tv_sec;
+
+		plwr->ms = delta_ms;
+	}
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+
 	return;
 }
 
@@ -216,6 +309,7 @@ void ohm_schedstats_record(int sched_type, struct task_struct *task,
 #define OHM_CTRL_SVM			BIT(OHM_SVM_MON)
 #define OHM_CTRL_RLIMIT			BIT(OHM_RLIMIT_MON)
 #define OHM_CTRL_IONMON         BIT(OHM_ION_MON)
+#define OHM_CTRL_BLKMON         BIT(OHM_BLK_MON)
 
 /*
 ohm_ctrl_list    = 0x5a0fffff
@@ -224,7 +318,7 @@ ohm_trig_list    = 0x5a002000
 */
 
 /*Default*/
-static int ohm_ctrl_list = OHM_LIST_MAGIC | OHM_CTRL_CPU_CUR | OHM_CTRL_MEMMON | OHM_CTRL_IONMON | OHM_CTRL_SCHEDTOTAL;
+static int ohm_ctrl_list = OHM_LIST_MAGIC | OHM_CTRL_CPU_CUR | OHM_CTRL_MEMMON | OHM_CTRL_IONMON | OHM_CTRL_SCHEDTOTAL | OHM_CTRL_BLKMON;
 static int ohm_logon_list = OHM_LIST_MAGIC;
 static int ohm_trig_list = OHM_LIST_MAGIC;
 
@@ -243,6 +337,10 @@ bool ohm_iopanic_mon_trig = false;
 bool ohm_ionmon_ctrl = true;
 bool ohm_ionmon_logon = false;
 bool ohm_ionmon_trig = false;
+
+bool ohm_blkmon_ctrl = true;
+bool ohm_blkmon_logon = false;
+bool ohm_blkmon_trig = false;
 
 /******  Para Update  *****/
 #define LOW_THRESH_MS_DEFAULT   100
@@ -299,6 +397,7 @@ void ohm_trig_init(void)
 	ohm_iopanic_mon_trig =
 	    (ohm_trig_list & OHM_CTRL_IOPANIC_MON) ? true : false;
 	ohm_ionmon_trig = (ohm_trig_list & OHM_CTRL_IONMON) ? true : false;
+	ohm_blkmon_trig = (ohm_trig_list & OHM_CTRL_BLKMON) ? true : false;
 	for (i = 0; i < OHM_SCHED_TOTAL; i++) {
 		sched_para[i].trig = (ohm_trig_list & BIT(i)) ? true : false;
 	}
@@ -313,6 +412,7 @@ void ohm_logon_init(void)
 	ohm_iopanic_mon_logon =
 	    (ohm_logon_list & OHM_CTRL_IOPANIC_MON) ? true : false;
 	ohm_ionmon_logon = (ohm_logon_list & OHM_CTRL_IONMON) ? true : false;
+	ohm_blkmon_logon = (ohm_logon_list & OHM_CTRL_BLKMON) ? true : false;
 	for (i = 0; i < OHM_SCHED_TOTAL; i++) {
 		sched_para[i].logon = (ohm_logon_list & BIT(i)) ? true : false;
 	}
@@ -327,27 +427,19 @@ void ohm_ctrl_init(void)
 	ohm_iopanic_mon_ctrl =
 	    (ohm_ctrl_list & OHM_CTRL_IOPANIC_MON) ? true : false;
 	ohm_ionmon_ctrl = (ohm_ctrl_list & OHM_CTRL_IONMON) ? true : false;
+	ohm_blkmon_ctrl = (ohm_ctrl_list & OHM_CTRL_BLKMON) ? true : false;
 	for (i = 0; i < OHM_SCHED_TOTAL; i++) {
 		sched_para[i].ctrl = (ohm_ctrl_list & BIT(i)) ? true : false;
 	}
 	return;
 }
 
-static inline void _ohm_para_init(struct sched_stat_para *sched_para)
-{
-	sched_para->delta_ms = 0;
-	memset(&sched_para->all, 0, sizeof(struct sched_stat_common));
-	memset(&sched_para->ux, 0, sizeof(struct sched_stat_common));
-	memset(&sched_para->fg, 0, sizeof(struct sched_stat_common));
-
-	return;
-}
-
 void ohm_para_init(void)
 {
 	int i;
-	for (i = 0; i < OHM_SCHED_TOTAL; i++) {
+	for (i = 0 ; i < OHM_SCHED_TOTAL; i++) {
 		_ohm_para_init(&sched_para[i]);
+		spin_lock_init(&sched_para[i].lock);
 		sched_para[i].low_thresh_ms = 100;
 		sched_para[i].high_thresh_ms = 500;
 	}
@@ -372,6 +464,12 @@ void ohm_para_init(void)
         #MODULE"_fg_total_ms: %llu\n"#MODULE"_fg_total_cnt: %llu\n" \
         #MODULE"_ux_max_ms: %llu\n"#MODULE"_ux_high_cnt: %llu\n"#MODULE"_ux_low_cnt: %llu\n" \
         #MODULE"_ux_total_ms: %llu\n"#MODULE"_ux_total_cnt: %llu\n" \
+	#MODULE"_top_app_max_ms: %llu\n"#MODULE"_top_app_high_cnt: %llu\n"#MODULE"_top_app_low_cnt: %llu\n" \
+	#MODULE"_top_app_total_ms: %llu\n"#MODULE"_top_app_total_cnt: %llu\n" \
+	#MODULE"_bg_max_ms: %llu\n"#MODULE"_bg_high_cnt: %llu\n"#MODULE"_bg_low_cnt: %llu\n" \
+	#MODULE"_bg_total_ms: %llu\n"#MODULE"_bg_total_cnt: %llu\n" \
+	#MODULE"_sys_bg_max_ms: %llu\n"#MODULE"_sys_bg_high_cnt: %llu\n"#MODULE"_sys_bg_low_cnt: %llu\n" \
+	#MODULE"_sys_bg_total_ms: %llu\n"#MODULE"_sys_bg_total_cnt: %llu\n" \
         #MODULE"_sysctl_uxchain_v2: %d\n"#MODULE"_sysctl_mmapsem_uninterruptable_time: %llu\n", \
         SCHED_STAT->ctrl ? "true":"false", \
         SCHED_STAT->logon ? "true":"false", \
@@ -394,6 +492,21 @@ void ohm_para_init(void)
         SCHED_STAT->ux.low_cnt, \
         SCHED_STAT->ux.total_ms, \
         SCHED_STAT->ux.total_cnt, \
+	SCHED_STAT->top.max_ms, \
+	SCHED_STAT->top.high_cnt, \
+	SCHED_STAT->top.low_cnt, \
+	SCHED_STAT->top.total_ms, \
+	SCHED_STAT->top.total_cnt, \
+	SCHED_STAT->bg.max_ms, \
+	SCHED_STAT->bg.high_cnt, \
+	SCHED_STAT->bg.low_cnt, \
+	SCHED_STAT->bg.total_ms, \
+	SCHED_STAT->bg.total_cnt, \
+	SCHED_STAT->sysbg.max_ms, \
+	SCHED_STAT->sysbg.high_cnt, \
+	SCHED_STAT->sysbg.low_cnt, \
+	SCHED_STAT->sysbg.total_ms, \
+	SCHED_STAT->sysbg.total_cnt, \
         sysctl_uxchain_v2, \
         sysctl_mmapsem_uninterruptable_time)
 #else
@@ -405,7 +518,13 @@ void ohm_para_init(void)
         #MODULE"_fg_max_ms: %llu\n"#MODULE"_fg_high_cnt: %llu\n"#MODULE"_fg_low_cnt: %llu\n" \
         #MODULE"_fg_total_ms: %llu\n"#MODULE"_fg_total_cnt: %llu\n" \
         #MODULE"_ux_max_ms: %llu\n"#MODULE"_ux_high_cnt: %llu\n"#MODULE"_ux_low_cnt: %llu\n" \
-        #MODULE"_ux_total_ms: %llu\n"#MODULE"_ux_total_cnt: %llu\n", \
+        #MODULE"_ux_total_ms: %llu\n"#MODULE"_ux_total_cnt: %llu\n" \
+	#MODULE"_top_app_max_ms: %llu\n"#MODULE"_top_app_high_cnt: %llu\n"#MODULE"_top_app_low_cnt: %llu\n" \
+	#MODULE"_top_app_total_ms: %llu\n"#MODULE"_top_app_total_cnt: %llu\n" \
+	#MODULE"_bg_max_ms: %llu\n"#MODULE"_bg_high_cnt: %llu\n"#MODULE"_bg_low_cnt: %llu\n" \
+	#MODULE"_bg_total_ms: %llu\n"#MODULE"_bg_total_cnt: %llu\n" \
+	#MODULE"_sys_bg_max_ms: %llu\n"#MODULE"_sys_bg_high_cnt: %llu\n"#MODULE"_sys_bg_low_cnt: %llu\n" \
+	#MODULE"_sys_bg_total_ms: %llu\n"#MODULE"_sys_bg_total_cnt: %llu\n", \
         SCHED_STAT->ctrl ? "true":"false", \
         SCHED_STAT->logon ? "true":"false", \
         SCHED_STAT->trig ? "true":"false", \
@@ -426,8 +545,37 @@ void ohm_para_init(void)
         SCHED_STAT->ux.high_cnt, \
         SCHED_STAT->ux.low_cnt, \
         SCHED_STAT->ux.total_ms, \
-        SCHED_STAT->ux.total_cnt)
+        SCHED_STAT->ux.total_cnt, \
+	SCHED_STAT->top.max_ms, \
+	SCHED_STAT->top.high_cnt, \
+	SCHED_STAT->top.low_cnt, \
+	SCHED_STAT->top.total_ms, \
+	SCHED_STAT->top.total_cnt, \
+	SCHED_STAT->bg.max_ms, \
+	SCHED_STAT->bg.high_cnt, \
+	SCHED_STAT->bg.low_cnt, \
+	SCHED_STAT->bg.total_ms, \
+	SCHED_STAT->bg.total_cnt, \
+	SCHED_STAT->sysbg.max_ms, \
+	SCHED_STAT->sysbg.high_cnt, \
+	SCHED_STAT->sysbg.low_cnt, \
+	SCHED_STAT->sysbg.total_ms, \
+	SCHED_STAT->sysbg.total_cnt)
 #endif
+
+#define LWR_STRING_FORMAT(BUF, LENGTH, SCHED_STAT)														\
+do {																									\
+	int index;																							\
+																										\
+	for (index = 0; index < LWR_SIZE; index++) {														\
+		LENGTH += sprintf(BUF + LENGTH, "long wait record slot %d: %u %u %llu %u\n", index,				\
+						SCHED_STAT->last_n_lwr[index].pid,												\
+						SCHED_STAT->last_n_lwr[index].priv,												\
+						SCHED_STAT->last_n_lwr[index].timestamp,										\
+						SCHED_STAT->last_n_lwr[index].ms);												\
+	}																									\
+}																										\
+while(0)
 
 static inline ssize_t sched_data_to_user(char __user *buff, size_t count,
 		loff_t *off, char *format_str, int len)
@@ -469,14 +617,24 @@ static const struct file_operations proc_cpu_load_fops = {
 static ssize_t sched_latency_read(struct file *filp, char __user *buff,
 				  size_t count, loff_t *off)
 {
-	char page[BUFFER_SIZE_L] = { 0 };
 	int len = 0;
+	int ret_len = 0;
+	unsigned long flags;
 	struct sched_stat_para *sched_stat =
 	    &sched_para[OHM_SCHED_SCHEDLATENCY];
+	char *page = kzalloc(BUFFER_SIZE_L, GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	len = LATENCY_STRING_FORMAT(page, sched_latency, sched_stat);
+	LWR_STRING_FORMAT(page, len, sched_stat);
+	clear_health_date(current, sched_stat);
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+	ret_len = sched_data_to_user(buff, count, off, page, len);
+	kfree(page);
 
-	return sched_data_to_user(buff, count, off, page, len);
+	return ret_len;
 }
 
 static const struct file_operations proc_sched_latency_fops = {
@@ -486,13 +644,23 @@ static const struct file_operations proc_sched_latency_fops = {
 static ssize_t iowait_read(struct file *filp, char __user *buff, size_t count,
 			   loff_t *off)
 {
-	char page[BUFFER_SIZE_L] = { 0 };
 	int len = 0;
+	int ret_len = 0;
+	unsigned long flags;
 	struct sched_stat_para *sched_stat = &sched_para[OHM_SCHED_IOWAIT];
+	char *page = kzalloc(BUFFER_SIZE_L, GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	len = LATENCY_STRING_FORMAT(page, iowait, sched_stat);
+	LWR_STRING_FORMAT(page, len, sched_stat);
+	clear_health_date(current, sched_stat);
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+	ret_len = sched_data_to_user(buff, count, off, page, len);
+	kfree(page);
 
-	return sched_data_to_user(buff, count, off, page, len);
+	return ret_len;
 }
 
 static const struct file_operations proc_iowait_fops = {
@@ -502,13 +670,23 @@ static const struct file_operations proc_iowait_fops = {
 static ssize_t fsync_wait_read(struct file *filp, char __user *buff,
 			       size_t count, loff_t *off)
 {
-	char page[BUFFER_SIZE_L] = { 0 };
 	int len = 0;
+	int ret_len = 0;
+	unsigned long flags;
 	struct sched_stat_para *sched_stat = &sched_para[OHM_SCHED_FSYNC];
+	char *page = kzalloc(BUFFER_SIZE_L, GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	len = LATENCY_STRING_FORMAT(page, fsync, sched_stat);
+	LWR_STRING_FORMAT(page, len, sched_stat);
+	clear_health_date(current, sched_stat);
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+	ret_len = sched_data_to_user(buff, count, off, page, len);
+	kfree(page);
 
-	return sched_data_to_user(buff, count, off, page, len);
+	return ret_len;
 }
 
 static const struct file_operations proc_fsync_wait_fops = {
@@ -520,12 +698,22 @@ static ssize_t emmcio_read(struct file *filp, char __user *buff, size_t count,
 			   loff_t *off)
 {
 	int len = 0;
-	char page[1024] = { 0 };
+	int ret_len = 0;
+	unsigned long flags;
 	struct sched_stat_para *sched_stat = &sched_para[OHM_SCHED_EMMCIO];
+	char *page = kzalloc(BUFFER_SIZE_L, GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	len = LATENCY_STRING_FORMAT(page, emmcio, sched_stat);
+	LWR_STRING_FORMAT(page, len, sched_stat);
+	clear_health_date(current, sched_stat);
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+	ret_len = sched_data_to_user(buff, count, off, page, len);
+	kfree(page);
 
-	return sched_data_to_user(buff, count, off, page, len);
+	return ret_len;
 }
 
 static const struct file_operations proc_emmcio_fops = {
@@ -535,13 +723,23 @@ static const struct file_operations proc_emmcio_fops = {
 static ssize_t dstate_read(struct file *filp, char __user *buff, size_t count,
 			   loff_t *off)
 {
-	char page[BUFFER_SIZE_L] = { 0 };
 	int len = 0;
+	int ret_len = 0;
+	unsigned long flags;
 	struct sched_stat_para *sched_stat = &sched_para[OHM_SCHED_DSTATE];
+	char *page = kzalloc(BUFFER_SIZE_L, GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
 
+	spin_lock_irqsave(&sched_stat->lock, flags);
 	len = LATENCY_STRING_FORMAT(page, dstate, sched_stat);
+	LWR_STRING_FORMAT(page, len, sched_stat);
+	clear_health_date(current, sched_stat);
+	spin_unlock_irqrestore(&sched_stat->lock, flags);
+	ret_len = sched_data_to_user(buff, count, off, page, len);
+	kfree(page);
 
-	return sched_data_to_user(buff, count, off, page, len);
+	return ret_len;
 }
 
 static const struct file_operations proc_dstate_fops = {
@@ -583,6 +781,8 @@ static ssize_t alloc_wait_read(struct file *filp, char __user *buff,
 		    ohm_memmon_logon ? "true" : "false",
 		    ohm_memmon_trig ? "true" : "false");
 
+	LWR_STRING_FORMAT(page, len, (&allocwait_para));
+
 	return sched_data_to_user(buff, count, off, page, len);
 }
 
@@ -613,6 +813,8 @@ static ssize_t ion_wait_read(struct file *filp, char __user *buff,
 		    ohm_ionmon_logon ? "true" : "false",
 		    ohm_ionmon_trig ? "true" : "false");
 
+	LWR_STRING_FORMAT(page, len, (&ionwait_para));
+
 	return sched_data_to_user(buff, count, off, page, len);
 }
 
@@ -620,6 +822,102 @@ static const struct file_operations proc_ion_wait_fops = {
 	.read = ion_wait_read,
 };
 #endif /*CONFIG_OPLUS_MEM_MONITOR */
+
+#ifdef CONFIG_OPLUS_BLK_MONITOR
+extern struct blk_wait_para q2i_wait_para;
+extern struct blk_wait_para i2d_wait_para;
+extern struct blk_wait_para q2c_wait_para;
+extern struct blk_wait_para d2c_wait_para;
+extern void blkmon_init(void);
+
+static ssize_t blk_q2c_wait_read(struct file *filp, char __user *buff, size_t count, loff_t *off)
+{
+	char page[BUFFER_SIZE_L];
+	int len = 0;
+
+	len = sprintf(page, "wait_ctrl: %s\n""wait_logon: %s\n""wait_trig: %s\n"
+				"wait_h_cnt: %llu\n""wait_l_cnt: %llu\n""wait_max_ms: %llu\n",
+				ohm_blkmon_ctrl ? "true" : "false",
+				ohm_blkmon_logon ? "true" : "false",
+				ohm_blkmon_trig ? "true" : "false",
+				q2c_wait_para.wait_stat.high_cnt,
+				q2c_wait_para.wait_stat.low_cnt,
+				q2c_wait_para.wait_stat.max_ms);
+	LWR_STRING_FORMAT(page, len, (&q2c_wait_para));
+
+	return sched_data_to_user(buff, count, off, page, len);
+}
+
+static const struct file_operations proc_blk_q2c_wait_fops = {
+	.read = blk_q2c_wait_read,
+};
+
+static ssize_t blk_q2i_wait_read(struct file *filp, char __user *buff, size_t count, loff_t *off)
+{
+	char page[BUFFER_SIZE_L];
+	int len = 0;
+
+	len = sprintf(page, "wait_ctrl: %s\n""wait_logon: %s\n""wait_trig: %s\n"
+				"wait_h_cnt: %llu\n""wait_l_cnt: %llu\n""wait_max_ms: %llu\n",
+				ohm_blkmon_ctrl ? "true" : "false",
+				ohm_blkmon_logon ? "true" : "false",
+				ohm_blkmon_trig ? "true" : "false",
+				q2i_wait_para.wait_stat.high_cnt,
+				q2i_wait_para.wait_stat.low_cnt,
+				q2i_wait_para.wait_stat.max_ms);
+	LWR_STRING_FORMAT(page, len, (&q2i_wait_para));
+
+	return sched_data_to_user(buff, count, off, page, len);
+}
+
+static const struct file_operations proc_blk_q2i_wait_fops = {
+	.read = blk_q2i_wait_read,
+};
+
+static ssize_t blk_i2d_wait_read(struct file *filp, char __user *buff, size_t count, loff_t *off)
+{
+	char page[BUFFER_SIZE_L];
+	int len = 0;
+
+	len = sprintf(page, "wait_ctrl: %s\n""wait_logon: %s\n""wait_trig: %s\n"
+				"wait_h_cnt: %llu\n""wait_l_cnt: %llu\n""wait_max_ms: %llu\n",
+				ohm_blkmon_ctrl ? "true" : "false",
+				ohm_blkmon_logon ? "true" : "false",
+				ohm_blkmon_trig ? "true" : "false",
+				i2d_wait_para.wait_stat.high_cnt,
+				i2d_wait_para.wait_stat.low_cnt,
+				i2d_wait_para.wait_stat.max_ms);
+	LWR_STRING_FORMAT(page, len, (&i2d_wait_para));
+
+	return sched_data_to_user(buff, count, off, page, len);
+}
+
+static const struct file_operations proc_blk_i2d_wait_fops = {
+	.read = blk_i2d_wait_read,
+};
+
+static ssize_t blk_d2c_wait_read(struct file *filp, char __user *buff, size_t count, loff_t *off)
+{
+	char page[BUFFER_SIZE_L];
+	int len = 0;
+
+	len = sprintf(page, "wait_ctrl: %s\n""wait_logon: %s\n""wait_trig: %s\n"
+				"wait_h_cnt: %llu\n""wait_l_cnt: %llu\n""wait_max_ms: %llu\n",
+				ohm_blkmon_ctrl ? "true" : "false",
+				ohm_blkmon_logon ? "true" : "false",
+				ohm_blkmon_trig ? "true" : "false",
+				d2c_wait_para.wait_stat.high_cnt,
+				d2c_wait_para.wait_stat.low_cnt,
+				d2c_wait_para.wait_stat.max_ms);
+	LWR_STRING_FORMAT(page, len, (&d2c_wait_para));
+
+	return sched_data_to_user(buff, count, off, page, len);
+}
+
+static const struct file_operations proc_blk_d2c_wait_fops = {
+	.read = blk_d2c_wait_read,
+};
+#endif /* CONFIG_OPLUS_BLK_MONITOR */
 
 static ssize_t ohm_para_read(struct file *filp, char __user *buff,
 			     size_t count, loff_t *off)
@@ -643,7 +941,7 @@ static ssize_t ohm_para_write(struct file *file, const char __user *buff,
 	char ctrl_list[32] = { 0 };
 	int action_ctrl;
 
-	if (len > 31)
+	if (len > 31 || len == 0)
 		return -EFAULT;
 
 	if (copy_from_user(&write_data, buff, len)) {
@@ -757,11 +1055,10 @@ extern unsigned int cpufreq_quick_get_max(unsigned int cpu);
 static ssize_t cpu_info_read(struct file *filp, char __user *buff,
 			     size_t count, loff_t *off)
 {
-	char page[BUFFER_SIZE_L] = { 0 };
+	char page[BUFFER_SIZE_L] = {0};
 	int len = 0;
 	unsigned int cpu;
 	unsigned long scale_capacity = 0, last_capacity = 0;
-
 	for_each_possible_cpu(cpu) {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 		scale_capacity = arch_scale_cpu_capacity(NULL, cpu);
@@ -899,7 +1196,7 @@ static ssize_t ohm_thresh_write_common(struct file *file,
 	char thresh_list[32] = { 0 };
 	int thresh = 0;
 
-	if (len > 31)
+	if (len > 31 || len == 0)
 		return -EFAULT;
 
 	if (copy_from_user(&write_data, buff, len)) {
@@ -1111,6 +1408,35 @@ static int __init healthinfo_init(void)
 		goto ERROR_INIT_VERSION;
 	}
 #endif /*CONFIG_OPLUS_MEM_MONITOR */
+
+#ifdef CONFIG_OPLUS_BLK_MONITOR
+	pentry = proc_create("blk_q2c_wait", S_IRUGO, healthinfo, &proc_blk_q2c_wait_fops);
+	if (!pentry) {
+		ohm_err("create blk_q2c_wait proc failed.\n");
+		goto ERROR_INIT_VERSION;
+	}
+
+	pentry = proc_create("blk_q2i_wait", S_IRUGO, healthinfo, &proc_blk_q2i_wait_fops);
+	if (!pentry) {
+		ohm_err("create blk_q2i_wait proc failed.\n");
+		goto ERROR_INIT_VERSION;
+	}
+
+	pentry = proc_create("blk_i2d_wait", S_IRUGO, healthinfo, &proc_blk_i2d_wait_fops);
+	if (!pentry) {
+		ohm_err("create blk_i2d_wait proc failed.\n");
+		goto ERROR_INIT_VERSION;
+	}
+
+	pentry = proc_create("blk_d2c_wait", S_IRUGO, healthinfo, &proc_blk_d2c_wait_fops);
+	if (!pentry) {
+		ohm_err("create blk_d2c_wait proc failed.\n");
+		goto ERROR_INIT_VERSION;
+	}
+
+	blkmon_init();
+#endif /* CONFIG_OPLUS_BLK_MONITOR */
+
 	pentry = proc_create("cpu_info", S_IRUGO, healthinfo, &proc_cpu_info_fops);
 	if (!pentry) {
 		ohm_err("create cpu info proc failed.\n");

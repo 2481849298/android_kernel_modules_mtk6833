@@ -62,7 +62,8 @@ static int get_power(int cpu, int freq)
 			return cs->power;
 	}
 err_found:
-	pr_err("not found %d %d in sge.\n", cpu, freq);
+	//pr_err("not found %d %d in sge.\n", cpu, freq);
+	trace_printk("not found %d %d in sge.\n", cpu, freq);
 	return 0;
 }
 

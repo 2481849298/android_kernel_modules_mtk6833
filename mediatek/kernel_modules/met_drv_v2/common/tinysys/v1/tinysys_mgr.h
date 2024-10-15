@@ -58,6 +58,8 @@ void ondiemet_extract(void);
  * external variable declaration
  *****************************************************************************/
 extern unsigned int ondiemet_module[ONDIEMET_NUM];
+extern unsigned int ondiemet_record_check[ONDIEMET_NUM];
+extern unsigned int ondiemet_recording[ONDIEMET_NUM];
 
 
 #endif /* __TINYSYS_MGR_H__ */

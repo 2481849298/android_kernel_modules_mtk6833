@@ -14,7 +14,7 @@ int olc_proc_debug_done(void);
 #define OLC_GENL_FAMILY_NAME "olc"
 #define OLC_GENL_FAMILY_VERSION 1
 
-#define DEFAULT_REPORT_INTERVAL_SECONDS 300
+#define DEFAULT_REPORT_INTERVAL_SECONDS 60
 
 enum olc_attr_type {
     OLC_ATTR_UNSPEC,
@@ -83,7 +83,7 @@ struct timeval {
 #endif
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
 static void do_gettimeofday(struct timeval *tv)
 {
     struct timespec64 now;
@@ -403,14 +403,15 @@ int olc_raise_exception(struct exception_info *exp)
         exp->time = time.tv_sec;
     }
 
-    if (flow_control_check(exp->id) != 0)
+
+    if (flow_control_check(exp->exceptionId) != 0)
     {
-        pr_notice("[olc] drop exception 0x%x\n", exp->id);
+        pr_notice("[olc] drop exception 0x%x\n", exp->exceptionId);
         return -1;
     }
 
-    pr_notice("[olc]exception:id=0x%x,time=%ld,level=%d,option=0x%lx,logpath=%s,module=%s,summary=%s\n",
-                exp->id, exp->time, exp->faultLevel, exp->logOption, exp->logPath, exp->module, exp->summary);
+    pr_notice("[olc]exception:id=0x%x,time=%ld,level=%d,atomicLogs=0x%lx,logParams=%s\n",
+                exp->exceptionId, exp->time, exp->level, exp->atomicLogs, exp->logParams);
     return olc_netlink_send_msg(OLC_CMD_NEW_EXCEPTION, OLC_ATTR_EXCEPTION_INFO, (void *)exp, sizeof(struct exception_info));
 }
 EXPORT_SYMBOL(olc_raise_exception);

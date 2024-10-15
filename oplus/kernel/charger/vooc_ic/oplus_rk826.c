@@ -33,7 +33,9 @@
 
 //#include <mt-plat/battery_meter.h>
 #include <linux/module.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
+#endif
 
 #else
 #include <linux/i2c.h>
@@ -52,9 +54,11 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
 #include <soc/oplus/system/boot_mode.h>
 #include <soc/oplus/system/oplus_project.h>
+#endif
 #endif
 #include "oplus_vooc_fw.h"
 
@@ -243,7 +247,7 @@ static int oplus_i2c_dma_read(struct i2c_client *client, u16 addr, s32 len, u8 *
 {
 	int ret = 0;
 	s32 retry = 0;
-	u8 buffer[2] = {0};
+	u8 buffer[2] = { 0 };
 	struct i2c_msg msg[2] = {
 		{
 			.addr = (client->addr & I2C_MASK_FLAG),
@@ -254,7 +258,7 @@ static int oplus_i2c_dma_read(struct i2c_client *client, u16 addr, s32 len, u8 *
 		{
 			.addr = (client->addr & I2C_MASK_FLAG),
 			.flags = I2C_M_RD,
-			.buf = (__u8 *)gpDMABuf_pa,   /*modified by PengNan*/
+			.buf = (__u8 *)gpDMABuf_pa, /*modified by PengNan*/
 			.len = len,
 		},
 	};
@@ -266,14 +270,13 @@ static int oplus_i2c_dma_read(struct i2c_client *client, u16 addr, s32 len, u8 *
 		mutex_unlock(&dma_wr_access_rk826);
 		return -1;
 	}
-	//chg_debug("vooc dma i2c read: 0x%x, %d bytes(s)\n", addr, len);
+	/* chg_debug("vooc dma i2c read: 0x%x, %d bytes(s)\n", addr, len); */
 	for (retry = 0; retry < 5; ++retry) {
+		if (unlikely(retry > 0))
+			usleep_range(10000, 10001); /* try again after 10ms */
 		ret = i2c_transfer(client->adapter, &msg[0], 2);
-		if (ret < 0) {
-			memcpy(rxbuf, gpDMABuf_pa, len);
-			mutex_unlock(&dma_wr_access_rk826);
-			return ret;
-		}
+		if (ret < 0)
+			continue;
 		memcpy(rxbuf, gpDMABuf_pa, len);
 		mutex_unlock(&dma_wr_access_rk826);
 		return 0;
@@ -1097,6 +1100,7 @@ static int rk826_get_fw_verion_from_ic(struct oplus_vooc_chip *chip)
 
 int rk826_is_rf_ftm_mode(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int boot_mode = get_boot_mode();
 #ifdef CONFIG_OPLUS_CHARGER_MTK
 	if (boot_mode == META_BOOT || boot_mode == FACTORY_BOOT
@@ -1116,6 +1120,9 @@ int rk826_is_rf_ftm_mode(void)
 		chg_debug(" boot_mode:%d, return false\n",boot_mode);
 		return false;
 	}
+#endif
+#else /*CONFIG_DISABLE_OPLUS_FUNCTION*/
+	return false;
 #endif
 }
 
@@ -1457,6 +1464,7 @@ int rk826_get_battery_mvolts_current(void)
 
 static void register_vooc_devinfo(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret = 0;
 	char *version;
 	char *manufacture;
@@ -1468,6 +1476,7 @@ static void register_vooc_devinfo(void)
 	if (ret) {
 		chg_err(" fail\n");
 	}
+#endif
 }
 
 static int get_hwpcb_version(void)

@@ -24,7 +24,7 @@
 
 #define BOOT_STR_SIZE 256
 #define BOOT_LOG_NUM 192
-/*#define TRACK_TASK_COMM*/
+//#define TRACK_TASK_COMM
 #define BOOT_FROM_SIZE 16
 
 extern unsigned long long notrace sched_clock(void);
@@ -44,7 +44,7 @@ static int boot_log_count;
 static DEFINE_MUTEX(op_bootprof_lock);
 static bool op_bootprof_enabled;
 static int boot_finish = 0;
-char boot_from[BOOT_FROM_SIZE] = {'\0'};
+char boot_from[BOOT_FROM_SIZE]={'\0'};
 
 #define MSG_SIZE 128
 
@@ -61,7 +61,6 @@ static long long nsec_high(unsigned long long nsec)
 		do_div(nsec, 1000000);
 		return -nsec;
 	}
-
 	do_div(nsec, 1000000);
 
 	return nsec;
@@ -69,9 +68,8 @@ static long long nsec_high(unsigned long long nsec)
 
 static unsigned long nsec_low(unsigned long long nsec)
 {
-	if ((long long)nsec < 0) {
+	if ((long long)nsec < 0)
 		nsec = -nsec;
-	}
 
 	return do_div(nsec, 1000000);
 }
@@ -83,17 +81,13 @@ void op_log_boot(const char *str)
 	struct boot_log_struct *p = &op_bootprof[boot_log_count];
 	size_t n = strlen(str) + 1;
 
-	if (!op_bootprof_enabled) {
+	if (!op_bootprof_enabled)
 		return;
-	}
-
 	ts = sched_clock();
-
 	if (boot_log_count >= BOOT_LOG_NUM) {
 		pr_err("[BOOTPROF] not enuough bootprof buffer\n");
 		return;
 	}
-
 	mutex_lock(&op_bootprof_lock);
 	p->timestamp = ts;
 #ifdef TRACK_TASK_COMM
@@ -101,13 +95,11 @@ void op_log_boot(const char *str)
 	n += TASK_COMM_LEN;
 #endif
 	p->comm_event = kzalloc(n, GFP_ATOMIC | __GFP_NORETRY |
-				__GFP_NOWARN);
-
+			  __GFP_NOWARN);
 	if (!p->comm_event) {
 		op_bootprof_enabled = false;
 		goto out;
 	}
-
 #ifdef TRACK_TASK_COMM
 	memcpy(p->comm_event, current->comm, TASK_COMM_LEN);
 	memcpy(p->comm_event + TASK_COMM_LEN, str, n - TASK_COMM_LEN);
@@ -122,22 +114,19 @@ out:
 static void op_bootprof_switch(int on)
 {
 	mutex_lock(&op_bootprof_lock);
-
 	if (op_bootprof_enabled ^ on) {
 		unsigned long long ts = sched_clock();
 
 		pr_info("BOOTPROF:%10Ld.%06ld: %s\n",
-			nsec_high(ts), nsec_low(ts), on ? "ON" : "OFF");
+		       nsec_high(ts), nsec_low(ts), on ? "ON" : "OFF");
 
 		if (on) {
 			op_bootprof_enabled = 1;
-
 		} else {
 			/* boot up complete */
 			boot_finish = 1;
 		}
 	}
-
 	mutex_unlock(&op_bootprof_lock);
 }
 
@@ -147,18 +136,15 @@ op_bootprof_write(struct file *filp, const char *ubuf, size_t cnt, loff_t *data)
 	char buf[BOOT_STR_SIZE];
 	size_t copy_size = cnt;
 
-	if (cnt >= sizeof(buf)) {
+	if (cnt >= sizeof(buf))
 		copy_size = BOOT_STR_SIZE - 1;
-	}
 
-	if (copy_from_user(&buf, ubuf, copy_size)) {
+	if (copy_from_user(&buf, ubuf, copy_size))
 		return -EFAULT;
-	}
 
 	if (cnt == 1 && buf[0] == '1') {
 		op_bootprof_switch(1);
 		return 1;
-
 	} else if (cnt == 1 && buf[0] == '0') {
 		op_bootprof_switch(0);
 		return 1;
@@ -168,6 +154,7 @@ op_bootprof_write(struct file *filp, const char *ubuf, size_t cnt, loff_t *data)
 	phx_monit(buf);
 
 	return cnt;
+
 }
 
 static ssize_t
@@ -175,17 +162,16 @@ op_bootfrom_write(struct file *filp, const char *ubuf, size_t cnt, loff_t *data)
 {
 	size_t copy_size = cnt;
 
-	if (cnt >= sizeof(boot_from)) {
+	if (cnt >= sizeof(boot_from))
 		copy_size = BOOT_FROM_SIZE - 1;
-	}
 
-	if (copy_from_user(&boot_from, ubuf, copy_size)) {
+	if (copy_from_user(&boot_from, ubuf, copy_size))
 		return -EFAULT;
-	}
 
 	boot_from[copy_size] = 0;
 
 	return cnt;
+
 }
 
 static int op_bootprof_show(struct seq_file *m, void *v)
@@ -195,10 +181,8 @@ static int op_bootprof_show(struct seq_file *m, void *v)
 
 	for (i = 0; i < boot_log_count; i++) {
 		p = &op_bootprof[i];
-
-		if (!p->comm_event) {
+		if (!p->comm_event)
 			continue;
-		}
 
 #ifdef TRACK_TASK_COMM
 #define FMT "%10Ld.%06ld :%5d-%-16s: %s\n"
@@ -207,13 +191,14 @@ static int op_bootprof_show(struct seq_file *m, void *v)
 #endif
 		SEQ_printf(m, FMT,
 #ifdef TRACK_TASK_COMM
-			nsec_high(p->timestamp), nsec_low(p->timestamp),
+			   nsec_high(p->timestamp), nsec_low(p->timestamp),
 
-			p->pid, p->comm_event, p->comm_event + TASK_COMM_LEN
+			   p->pid, p->comm_event, p->comm_event + TASK_COMM_LEN
 #else
-			p->comm_event
+			   p->comm_event
 #endif
-);
+			   );
+
 	}
 
 	return 0;
@@ -255,17 +240,15 @@ static int __init init_boot_prof(void)
 {
 	struct proc_dir_entry *pe;
 
-	pe = proc_create("phoenix", 0666, NULL, &op_bootprof_fops);
+    pe = proc_create("phoenix", 0666, NULL, &op_bootprof_fops);
 
-	if (!pe) {
+	if (!pe)
 		return -ENOMEM;
-	}
 
-	pe = proc_create("opbootfrom", 0666, NULL, &op_bootfrom_fops);
+    pe = proc_create("opbootfrom", 0666, NULL, &op_bootfrom_fops);
 
-	if (!pe) {
+	if (!pe)
 		return -ENOMEM;
-	}
 
 	return 0;
 }

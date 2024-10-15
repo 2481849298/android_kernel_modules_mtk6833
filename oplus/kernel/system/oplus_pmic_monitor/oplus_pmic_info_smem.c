@@ -21,24 +21,23 @@ static void *format = NULL;
 
 void init_pmic_history_smem(void)
 {
-	size_t smem_size = 0;
+	size_t smem_size=0;
 
 	format = qcom_smem_get(QCOM_SMEM_HOST_ANY,
-			       SMEM_PMIC_INFO,
-			       &smem_size);
+			SMEM_PMIC_INFO,
+			&smem_size);
 
-	if (IS_ERR(format) || !smem_size) {
-		format = NULL;
-	}
+    if (IS_ERR(format) || !smem_size) {
+        format = NULL;
+    }
 }
 
 void *get_pmic_history(void)
 {
-	if (format == NULL) {
-		init_pmic_history_smem();
-	}
-
-	return format;
+        if (format == NULL) {
+            init_pmic_history_smem();
+        }
+        return format;
 }
 
 MODULE_DESCRIPTION("oplus ocp status");

@@ -63,15 +63,15 @@ static ssize_t proc_generate_exception_write(struct file *file,
             value = strchr(token, '=');
             if (value != NULL)
             {
-                exp.id = simple_strtoul(value + 1, NULL, 16);
+                exp.exceptionId = simple_strtoul(value + 1, NULL, 16);
             }
         }
-        else if (strncmp(token, "module", strlen("module")) == 0)
+        else if (strncmp(token, "time", strlen("time")) == 0)
         {
             value = strchr(token, '=');
             if (value != NULL)
             {
-                strncpy(exp.module, value + 1, sizeof(exp.module));
+                exp.time = simple_strtoul(value + 1, NULL, 10);
             }
         }
         else if (strncmp(token, "level", strlen("level")) == 0)
@@ -79,7 +79,7 @@ static ssize_t proc_generate_exception_write(struct file *file,
             value = strchr(token, '=');
             if (value != NULL)
             {
-                exp.faultLevel = simple_strtoul(value + 1, NULL, 16);
+                exp.level = simple_strtoul(value + 1, NULL, 10);
             }
         }
         else if (strncmp(token, "exceptionType", strlen("exceptionType")) == 0)
@@ -87,38 +87,30 @@ static ssize_t proc_generate_exception_write(struct file *file,
             value = strchr(token, '=');
             if (value != NULL)
             {
-                exp.exceptionType = simple_strtoul(value + 1, NULL, 16);
+                exp.exceptionType = simple_strtoul(value + 1, NULL, 10);
             }
         }
-        else if (strncmp(token, "logOption", strlen("logOption")) == 0)
+        else if (strncmp(token, "atomicLogs", strlen("atomicLogs")) == 0)
         {
             value = strchr(token, '=');
             if (value != NULL)
             {
-                exp.logOption = simple_strtoull(value + 1, NULL, 16);
+                exp.atomicLogs = simple_strtoull(value + 1, NULL, 10);
             }
         }
-        else if (strncmp(token, "logPath", strlen("logPath")) == 0)
+        else if (strncmp(token, "logParams", strlen("logParams")) == 0)
         {
             value = strchr(token, '=');
             if (value != NULL)
             {
-                strncpy(exp.logPath, value + 1, sizeof(exp.logPath));
-            }
-        }
-        else if (strncmp(token, "summary", strlen("summary")) == 0)
-        {
-            value = strchr(token, '=');
-            if (value != NULL)
-            {
-                strncpy(exp.summary, value + 1, sizeof(exp.summary));
+                strncpy(exp.logParams, value + 1, sizeof(exp.logParams) - 1);
             }
         }
 
         token = strsep(&instr, ",");
     }
 
-    if (exp.id != 0)
+    if (exp.exceptionId != 0)
     {
         if (olc_raise_exception(&exp) < 0)
         {

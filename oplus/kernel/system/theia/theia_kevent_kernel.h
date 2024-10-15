@@ -24,15 +24,17 @@ theia_kevent_packet.data: is logmap format: logmap{key1:value1;key2:value2;key3:
 */
 #define THEIA_KEVENT_TYPE_DCS_MSG 2
 
+#define THEIA_ATTR_TYPE_SEND_EVENT 3
+
 #define THEIA_KEVENT_MODULE 	"theia_kevent"
 
 struct theia_kevent_packet {
-	int  type;                    /* 1: common string 2: dcs message*/
-	char tag[MAX_PAYLOAD_TAG_SIZE];            /* tag */
-	char event_id[MAX_PAYLOAD_EVENTID_SIZE];     /* eventID */
-	size_t len;                 /* Length of packet data */
-	unsigned char data[0];            /* Optional packet data */
-} __attribute__((packed));
+    int  type;                    /* 1: common string 2: dcs message*/
+    char tag[MAX_PAYLOAD_TAG_SIZE];            /* tag */
+    char event_id[MAX_PAYLOAD_EVENTID_SIZE];     /* eventID */
+    size_t len;                 /* Length of packet data */
+    unsigned char data[0];            /* Optional packet data */
+}__attribute__((packed));
 
 int theia_kevent_module_init(void);
 void theia_kevent_module_exit(void);

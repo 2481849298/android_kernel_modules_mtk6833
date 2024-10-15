@@ -17,5 +17,6 @@ endif
 
 obj-$(CONFIG_OPLUS_FEATURE_SENSOR_DEVINFO_V2)	+= oplus_bsp_sensor_devinfo.o
 oplus_bsp_sensor_devinfo-objs += sensor_devinfo.o
+oplus_bsp_sensor_devinfo-objs += oplus_ssc_interact.o
 oplus_bsp_sensor_devinfo-objs += sensor_interface_v2.o
 

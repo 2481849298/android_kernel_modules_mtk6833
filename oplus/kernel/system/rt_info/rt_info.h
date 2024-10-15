@@ -22,7 +22,7 @@
 
 #ifdef RT_INFO_DEBUG
 #define rt_err(fmt, ...) \
-                printk_deferred(KERN_ERR "[RT_INFO][%s]"fmt, __func__, ##__VA_ARGS__)
+            printk_deferred(KERN_ERR "[RT_INFO][%s]"fmt, __func__, ##__VA_ARGS__)
 #else
 #define rt_err(fmt, ...)
 #endif

@@ -23,6 +23,7 @@
 #ifdef OPLUS_FEATURE_SCHED_ASSIST
 #include <linux/sched_assist/sched_assist_common.h>
 #endif
+
 #define UX_LOCK_WAITING_WARNING 10
 
 int sysctl_debug_kernel_lock = 0;
@@ -370,6 +371,9 @@ bool current_boost_fit(struct task_struct *owner)
 	    && (lock_ux_target(current));
 }
 
+#ifdef CONFIG_OPLUS_LOCKING_STRATEGY
+extern void mutex_list_add(struct task_struct *task, struct list_head *entry,
+			    struct list_head *head, struct mutex *lock);
 void ux_mutex_ajust_waiter_list(struct task_struct *task, struct mutex *lock)
 {
 	struct list_head *pos, *n;
@@ -391,6 +395,11 @@ out:
 	}
 	spin_unlock(&lock->wait_lock);
 }
+#else
+static inline void ux_mutex_ajust_waiter_list(struct task_struct *task, struct mutex *lock)
+{
+}
+#endif
 
 void mutex_owner_boost(struct mutex *lock, struct mutex_waiter *waiter,
 			     struct task_struct *task)

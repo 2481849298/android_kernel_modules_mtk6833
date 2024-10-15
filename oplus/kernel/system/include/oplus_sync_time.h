@@ -16,48 +16,37 @@
 #define _OPLUS_SYNC_TIME_H
 #include <linux/rtc.h>
 
-static ssize_t watchdog_write(struct file *file, const char __user *buf,
-			      size_t count, loff_t *ppos)
+static ssize_t watchdog_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 {
 	s32 value;
 	struct timespec ts;
 	struct rtc_time tm;
 
 	if (count == sizeof(s32)) {
-		if (copy_from_user(&value, buf, sizeof(s32))) {
+		if (copy_from_user(&value, buf, sizeof(s32)))
 			return -EFAULT;
-		}
-
 	} else if (count <= 11) { /* ASCII perhaps? */
 		char ascii_value[11];
 		unsigned long int ulval;
 		int ret;
 
-		if (copy_from_user(ascii_value, buf, count)) {
+		if (copy_from_user(ascii_value, buf, count))
 			return -EFAULT;
-		}
 
 		if (count > 10) {
-			if (ascii_value[10] == '\n') {
+			if (ascii_value[10] == '\n')
 				ascii_value[10] = '\0';
-
-			} else {
+			else
 				return -EINVAL;
-			}
-
 		} else {
 			ascii_value[count] = '\0';
 		}
-
 		ret = kstrtoul(ascii_value, 16, &ulval);
-
 		if (ret) {
 			pr_debug("%s, 0x%lx, 0x%x\n", ascii_value, ulval, ret);
 			return -EINVAL;
 		}
-
 		value = (s32)lower_32_bits(ulval);
-
 	} else {
 		return -EINVAL;
 	}

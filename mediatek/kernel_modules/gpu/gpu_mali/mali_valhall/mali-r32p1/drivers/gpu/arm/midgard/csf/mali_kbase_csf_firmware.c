@@ -34,6 +34,7 @@
 #include "mali_kbase_csf_tl_reader.h"
 #include "backend/gpu/mali_kbase_clk_rate_trace_mgr.h"
 #include <csf/ipa_control/mali_kbase_csf_ipa_control.h>
+#include <mali_kbase_hwaccess_time.h>
 
 #include <linux/list.h>
 #include <linux/slab.h>
@@ -50,7 +51,7 @@
 
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
 #include <mtk_gpufreq.h>
-#include "platform/mtk_platform_common.h"
+#include <platform/mtk_platform_common.h>
 #endif
 
 #define MALI_MAX_FIRMWARE_NAME_LEN ((size_t)30)
@@ -297,7 +298,7 @@ static void wait_ready(struct kbase_device *kbdev)
 		dev_info(kbdev->dev, "AS_ACTIVE bit stuck when MCU load the MMU tables\n");
 		ged_log_buf_print2(
 			 kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
-			 "AS_ACTIVE bit stuck when MCU load the MMU tables");
+			 "AS_ACTIVE bit stuck when MCU load the MMU tables\n");
 		if (!mtk_common_gpufreq_bringup()) {
 			gpufreq_dump_infra_status();
 			mtk_common_debug_dump();
@@ -449,24 +450,24 @@ static int reload_fw_data_sections(struct kbase_device *kbdev)
 {
 	const u32 magic = FIRMWARE_HEADER_MAGIC;
 	struct kbase_csf_firmware_interface *interface;
-	const struct firmware *firmware;
+	struct kbase_csf_mcu_fw *const mcu_fw = &kbdev->csf.fw;
 	int ret = 0;
 
-	if (request_firmware(&firmware, reload_fw_name, kbdev->dev) != 0) {
-		dev_err(kbdev->dev,
-			"Failed to reload firmware image '%s'\n",
-			reload_fw_name);
-		return -ENOENT;
+	if (WARN_ON(mcu_fw->data == NULL)) {
+		dev_err(kbdev->dev, "Firmware image copy not loaded\n");
+		ret = -EINVAL;
+		goto out;
 	}
 
 	/* Do couple of basic sanity checks */
-	if (firmware->size < FIRMWARE_HEADER_LENGTH) {
+	if (mcu_fw->size < FIRMWARE_HEADER_LENGTH) {
 		dev_err(kbdev->dev, "Firmware image unexpectedly too small\n");
 		ret = -EINVAL;
 		goto out;
 	}
 
-	if (memcmp(firmware->data, &magic, sizeof(magic)) != 0) {
+	/* Do a basic sanity check on MAGIC signature */
+	if (memcmp(mcu_fw->data, &magic, sizeof(magic)) != 0) {
 		dev_err(kbdev->dev, "Incorrect magic value, firmware image could have been corrupted\n");
 		ret = -EINVAL;
 		goto out;
@@ -478,7 +479,7 @@ static int reload_fw_data_sections(struct kbase_device *kbdev)
 		    !(interface->flags & CSF_FIRMWARE_ENTRY_WRITE))
 			continue;
 
-		load_fw_image_section(kbdev, firmware->data, interface->phys,
+		load_fw_image_section(kbdev, mcu_fw->data, interface->phys,
 			interface->num_pages, interface->flags,
 			interface->data_start, interface->data_end);
 	}
@@ -486,7 +487,6 @@ static int reload_fw_data_sections(struct kbase_device *kbdev)
 	kbase_csf_firmware_reload_trace_buffers_data(kbdev);
 
 out:
-	release_firmware(firmware);
 	return ret;
 }
 
@@ -505,7 +505,7 @@ out:
  * @size: Size (in bytes) of the section
  */
 static int parse_memory_setup_entry(struct kbase_device *kbdev,
-		const struct firmware *fw,
+		const struct kbase_csf_mcu_fw *const fw,
 		const u32 *entry, unsigned int size)
 {
 	int ret = 0;
@@ -578,7 +578,7 @@ static int parse_memory_setup_entry(struct kbase_device *kbdev,
 	} else {
 		ret = kbase_mem_pool_alloc_pages(
 			&kbdev->mem_pools.small[KBASE_MEM_GROUP_CSF_FW],
-			num_pages, phys, false);
+			num_pages, phys, false, NULL);
 		if (ret < 0)
 			goto out;
 	}
@@ -709,7 +709,7 @@ out:
  * @size:  Size (in bytes) of the section
  */
 static int parse_timeline_metadata_entry(struct kbase_device *kbdev,
-	const struct firmware *fw, const u32 *entry, unsigned int size)
+	const struct kbase_csf_mcu_fw *const fw, const u32 *entry, unsigned int size)
 {
 	const u32 data_start = entry[0];
 	const u32 data_size = entry[1];
@@ -768,7 +768,7 @@ static int parse_timeline_metadata_entry(struct kbase_device *kbdev,
  * @header: Header word of the entry
  */
 static int load_firmware_entry(struct kbase_device *kbdev,
-		const struct firmware *fw,
+		const struct kbase_csf_mcu_fw *const fw,
 		u32 offset, u32 header)
 {
 	const unsigned int type = entry_type(header);
@@ -1242,6 +1242,90 @@ u32 kbase_csf_firmware_global_output(
 	return val;
 }
 
+#define CSHW_BASE 0x0030000
+#define CSHW_CSHWIF_0 0x4000 /* () CSHWIF 0 registers */
+#define CSHWIF(n) (CSHW_BASE + CSHW_CSHWIF_0 + (n)*256)
+#define CSHWIF_REG(n, r) (CSHWIF(n) + r)
+#define NR_HW_INTERFACES 4
+
+static void dump_hwif_registers(struct kbase_device *kbdev)
+{
+	unsigned long flags;
+	unsigned int i;
+
+	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+	for (i = 0; kbdev->pm.backend.gpu_powered && (i < NR_HW_INTERFACES); i++) {
+		u64 cmd_ptr = kbase_reg_read(kbdev, CSHWIF_REG(i, 0x0)) |
+		((u64)kbase_reg_read(kbdev, CSHWIF_REG(i, 0x4)) << 32);
+
+		if (!cmd_ptr)
+			continue;
+		dev_err(kbdev->dev, "Register dump of CSHWIF %d\n", i);
+		dev_err(kbdev->dev, "CMD_PTR: %llx CMD_PTR_END: %llx STATUS: %x JASID: %x EMUL_INSTR: %llx WAIT_STATUS: %x SB_SET_SEL: %x SB_SEL: %x\n",
+			cmd_ptr,
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x8)) | ((u64)kbase_reg_read(kbdev, CSHWIF_REG(i, 0xC)) << 32),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x24)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x34)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x60)) | ((u64)kbase_reg_read(kbdev, CSHWIF_REG(i, 0x64)) << 32),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x74)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x78)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x7C)));
+		dev_err(kbdev->dev, "CMD_COUNTER: %x EVT_RAW: %x EVT_IRQ_STATUS: %x EVT_HALT_STATUS: %x FAULT_STATUS: %x FAULT_ADDR: %llx\n",
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x80)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0x98)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0xA4)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0xAC)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0xB0)),
+			kbase_reg_read(kbdev, CSHWIF_REG(i, 0xB8)) | ((u64)kbase_reg_read(kbdev, CSHWIF_REG(i, 0xBC)) << 32));
+		dev_err(kbdev->dev, "\n");
+	}
+	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+}
+
+#define CSHW_IT_COMP_REG(r) (CSHW_BASE + 0x1000 + r)
+#define CSHW_IT_FRAG_REG(r) (CSHW_BASE + 0x2000 + r)
+#define CSHW_IT_TILER_REG(r)(CSHW_BASE + 0x3000 + r)
+
+static void dump_iterator_registers(struct kbase_device *kbdev)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&kbdev->hwaccess_lock, flags);
+	if (kbdev->pm.backend.gpu_powered) {
+		dev_err(kbdev->dev, "Compute  CTRL: %x STATUS: %x JASID: %u IRQ_RAW: %8x IRQ_STATUS: %8x EP_EVT_STATUS: %x BLOCKED_SB_ENTRY: %8x SUSPEND_BUF %llx\n",
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0x0)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0x4)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0x8)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0xD0)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0xDC)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0xA4)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0xA0)),
+			kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0x80)) | ((u64)kbase_reg_read(kbdev, CSHW_IT_COMP_REG(0x84)) << 32));
+		dev_err(kbdev->dev, "Fragment CTRL: %x STATUS: %x JASID: %u IRQ_RAW: %8x IRQ_STATUS: %8x EP_EVT_STATUS: %x BLOCKED_SB_ENTRY: %8x SUSPEND_BUF %llx\n",
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0x0)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0x4)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0x8)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0xD0)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0xDC)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0xA4)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0xA0)),
+			kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0x80)) | ((u64)kbase_reg_read(kbdev, CSHW_IT_FRAG_REG(0x84)) << 32));
+		dev_err(kbdev->dev, "Tiler    CTRL: %x STATUS: %x JASID: %u IRQ_RAW: %8x IRQ_STATUS: %8x EP_EVT_STATUS: %x BLOCKED_SB_ENTRY: %8x SUSPEND_BUF %llx\n",
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0x0)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0x4)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0x8)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0xD0)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0xDC)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0xA4)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0xA0)),
+			kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0x80)) | ((u64)kbase_reg_read(kbdev, CSHW_IT_TILER_REG(0x84)) << 32));
+		dev_err(kbdev->dev, "\n");
+	}
+	spin_unlock_irqrestore(&kbdev->hwaccess_lock, flags);
+}
+
+void kbase_csf_dump_firmware_trace_buffer(struct kbase_device *kbdev);
+
 /**
  * handle_internal_firmware_fatal - Handler for CS internal firmware fault.
  *
@@ -1253,6 +1337,17 @@ u32 kbase_csf_firmware_global_output(
 static void handle_internal_firmware_fatal(struct kbase_device *const kbdev)
 {
 	int as;
+	static int dump = 0;
+
+	/* dump fw and tracebuffer only once */
+	if (!dump) {
+		dump++;
+		dump_hwif_registers(kbdev);
+		dump_iterator_registers(kbdev);
+		// dev_err(kbdev->dev, "[mali-debug] FW dump start");
+		// kbase_csf_dump_firmware_trace_buffer(kbdev);
+		// dev_err(kbdev->dev, "[mali-debug] FW dump end");
+	}
 
 	for (as = 0; as < kbdev->nr_hw_address_spaces; as++) {
 		unsigned long flags;
@@ -1346,7 +1441,7 @@ static int wait_for_global_request(struct kbase_device *const kbdev,
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
 		ged_log_buf_print2(
 			 kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
-			 "Timed out (%d ms) waiting for global request %x to complete",
+			 "Timeout (%d ms) waiting for global request %x to complete\n",
 			 kbdev->csf.fw_timeout_ms, req_mask);
 #endif
 		err = -ETIMEDOUT;
@@ -1561,7 +1656,7 @@ static void kbase_csf_firmware_reload_worker(struct work_struct *work)
 						  csf.firmware_reload_work);
 	int err;
 
-	dev_info(kbdev->dev, "reloading firmware");
+	dev_info(kbdev->dev, "reloading firmware from memory");
 
 	/* Reload just the data sections from firmware binary image */
 	err = reload_fw_data_sections(kbdev);
@@ -1569,7 +1664,7 @@ static void kbase_csf_firmware_reload_worker(struct work_struct *work)
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
 		ged_log_buf_print2(
 			 kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
-			 "!! Reload of FW had failed, MCU won't be re-enabled !!");
+			 "Reload of FW had failed, MCU won't be re-enabled !!\n");
 #endif
 		return;
 	}
@@ -1608,8 +1703,14 @@ void kbase_csf_firmware_reload_completed(struct kbase_device *kbdev)
 	 */
 	version = get_firmware_version(kbdev);
 
-	if (version != kbdev->csf.global_iface.version)
+	if (version != kbdev->csf.global_iface.version) {
 		dev_err(kbdev->dev, "Version check failed in firmware reboot.");
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"Version check failed in firmware reboot\n");
+#endif
+	}
 
 	KBASE_KTRACE_ADD(kbdev, FIRMWARE_REBOOT, NULL, 0u);
 
@@ -1789,11 +1890,13 @@ int kbase_csf_firmware_early_init(struct kbase_device *kbdev)
 	INIT_LIST_HEAD(&kbdev->csf.firmware_config);
 	INIT_LIST_HEAD(&kbdev->csf.firmware_timeline_metadata);
 	INIT_LIST_HEAD(&kbdev->csf.firmware_trace_buffers.list);
+	INIT_LIST_HEAD(&kbdev->csf.user_reg.list);
 	INIT_WORK(&kbdev->csf.firmware_reload_work,
 		  kbase_csf_firmware_reload_worker);
 	INIT_WORK(&kbdev->csf.fw_error_work, firmware_error_worker);
 
 	mutex_init(&kbdev->csf.reg_lock);
+	kbdev->csf.fw = (struct kbase_csf_mcu_fw){ .data = NULL };
 
 	return 0;
 }
@@ -1801,6 +1904,7 @@ int kbase_csf_firmware_early_init(struct kbase_device *kbdev)
 int kbase_csf_firmware_init(struct kbase_device *kbdev)
 {
 	const struct firmware *firmware;
+	struct kbase_csf_mcu_fw *const mcu_fw = &kbdev->csf.fw;
 	const u32 magic = FIRMWARE_HEADER_MAGIC;
 	u8 version_major, version_minor;
 	u32 version_hash;
@@ -1844,22 +1948,36 @@ int kbase_csf_firmware_init(struct kbase_device *kbdev)
 				fw_name);
 		ret = -ENOENT;
 		goto error;
+	} else {
+		/* Try to save a copy and then release the loaded firmware image */
+		mcu_fw->size = firmware->size;
+		mcu_fw->data = vmalloc((unsigned long)mcu_fw->size);
+
+		if (mcu_fw->data == NULL) {
+			ret = -ENOMEM;
+		} else {
+			memcpy(mcu_fw->data, firmware->data, mcu_fw->size);
+			dev_vdbg(kbdev->dev, "Firmware image (%zu-bytes) retained in csf.fw\n",
+				mcu_fw->size);
+		}
+
+		release_firmware(firmware);
 	}
 
-	if (firmware->size < FIRMWARE_HEADER_LENGTH) {
+	if (mcu_fw->size < FIRMWARE_HEADER_LENGTH) {
 		dev_err(kbdev->dev, "Firmware too small\n");
 		ret = -EINVAL;
 		goto error;
 	}
 
-	if (memcmp(firmware->data, &magic, sizeof(magic)) != 0) {
+	if (memcmp(mcu_fw->data, &magic, sizeof(magic)) != 0) {
 		dev_err(kbdev->dev, "Incorrect firmware magic\n");
 		ret = -EINVAL;
 		goto error;
 	}
 
-	version_minor = firmware->data[4];
-	version_major = firmware->data[5];
+	version_minor = mcu_fw->data[4];
+	version_major = mcu_fw->data[5];
 
 	if (version_major != FIRMWARE_HEADER_VERSION) {
 		dev_err(kbdev->dev,
@@ -1869,14 +1987,14 @@ int kbase_csf_firmware_init(struct kbase_device *kbdev)
 		goto error;
 	}
 
-	memcpy(&version_hash, &firmware->data[8], sizeof(version_hash));
+	memcpy(&version_hash, &mcu_fw->data[8], sizeof(version_hash));
 
 	dev_notice(kbdev->dev, "Loading Mali firmware 0x%x", version_hash);
 
-	memcpy(&entry_end_offset, &firmware->data[0x10],
+	memcpy(&entry_end_offset, &mcu_fw->data[0x10],
 			sizeof(entry_end_offset));
 
-	if (entry_end_offset > firmware->size) {
+	if (entry_end_offset > mcu_fw->size) {
 		dev_err(kbdev->dev, "Firmware image is truncated\n");
 		ret = -EINVAL;
 		goto error;
@@ -1887,11 +2005,11 @@ int kbase_csf_firmware_init(struct kbase_device *kbdev)
 		u32 header;
 		unsigned int size;
 
-		memcpy(&header, &firmware->data[entry_offset], sizeof(header));
+		memcpy(&header, &mcu_fw->data[entry_offset], sizeof(header));
 
 		size = entry_size(header);
 
-		ret = load_firmware_entry(kbdev, firmware, entry_offset,
+		ret = load_firmware_entry(kbdev, mcu_fw, entry_offset,
 				header);
 		if (ret != 0) {
 			dev_err(kbdev->dev, "Failed to load firmware image\n");
@@ -1956,7 +2074,6 @@ int kbase_csf_firmware_init(struct kbase_device *kbdev)
 
 
 	/* Firmware loaded successfully */
-	release_firmware(firmware);
 	KBASE_KTRACE_ADD(kbdev, FIRMWARE_BOOT, NULL,
 			(((u64)version_hash) << 32) |
 			(((u64)version_major) << 8) | version_minor);
@@ -1964,7 +2081,6 @@ int kbase_csf_firmware_init(struct kbase_device *kbdev)
 
 error:
 	kbase_csf_firmware_term(kbdev);
-	release_firmware(firmware);
 	return ret;
 }
 
@@ -2049,6 +2165,13 @@ void kbase_csf_firmware_term(struct kbase_device *kbdev)
 #ifndef MALI_KBASE_BUILD
 	mali_kutf_fw_utf_entry_cleanup(kbdev);
 #endif
+
+	if (kbdev->csf.fw.data) {
+		/* Free the copy of the firmware image */
+		vfree(kbdev->csf.fw.data);
+		kbdev->csf.fw.data = NULL;
+		dev_vdbg(kbdev->dev, "Free retained image csf.fw (%zu-bytes)\n", kbdev->csf.fw.size);
+	}
 
 	/* This will also free up the region allocated for the shared interface
 	 * entry parsed from the firmware image.
@@ -2183,6 +2306,11 @@ void kbase_csf_wait_protected_mode_enter(struct kbase_device *kbdev)
 
 		if (loop == max_iterations) {
 			dev_err(kbdev->dev, "Timeout for actual pmode entry after PROTM_ENTER ack");
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+			ged_log_buf_print2(
+				kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+				"Timeout for actual pmode entry after PROTM_ENTER ack\n");
+#endif
 			err = -ETIMEDOUT;
 		}
 	}
@@ -2364,7 +2492,7 @@ int kbase_csf_firmware_mcu_shared_mapping_init(
 
 	ret = kbase_mem_pool_alloc_pages(
 		&kbdev->mem_pools.small[KBASE_MEM_GROUP_CSF_FW],
-		num_pages, phys, false);
+		num_pages, phys, false, NULL);
 	if (ret <= 0)
 		goto phys_mem_pool_alloc_error;
 

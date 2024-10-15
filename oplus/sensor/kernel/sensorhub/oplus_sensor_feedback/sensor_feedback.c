@@ -21,11 +21,19 @@
 #include <linux/time64.h>
 #include <linux/kdev_t.h>
 #include <linux/vmalloc.h>
+#include <linux/proc_fs.h>
+#include <linux/version.h>
 #include "hf_manager.h"
 #include "scp.h"
 #include "sensor_feedback.h"
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 #include <soc/oplus/system/kernel_fb.h>
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+#ifndef PDE_DATA
+#define PDE_DATA pde_data
+#endif
 #endif
 
 #define SENSOR_DEVICE_TYPE	  "10002"
@@ -53,6 +61,8 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{PS_FIRST_REPORT_DELAY_COUNT_ID, "device_ps_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
 	{PS_ORIGIN_DATA_TO_ZERO_ID, "device_ps_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{PS_CALI_DATA_ID, "device_ps_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{PS_DYNAMIC_CALI_ID, "device_ps_dynamic_cali", SENSOR_DEBUG_DEVICE_TYPE},
+	{PS_ZERO_CALI_ID, "device_ps_zero_cali", SENSOR_DEBUG_DEVICE_TYPE},
 
 
 	{ALS_INIT_FAIL_ID, "device_als_init_fail", SENSOR_DEVICE_TYPE},
@@ -63,6 +73,10 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{ALS_FIRST_REPORT_DELAY_COUNT_ID, "device_als_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
 	{ALS_ORIGIN_DATA_TO_ZERO_ID, "device_als_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{ALS_CALI_DATA_ID, "device_als_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{ALS_CG_RPT_INFO_ID, "device_als_cg_rpt_info", SENSOR_DEBUG_DEVICE_TYPE},
+
+
+	{CCT_I2C_ERR_ID, "device_cct_i2c_err", SENSOR_DEVICE_TYPE},
 
 
 	{ACCEL_INIT_FAIL_ID, "device_acc_init_fail", SENSOR_DEVICE_TYPE},
@@ -74,7 +88,18 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{ACCEL_ORIGIN_DATA_TO_ZERO_ID, "device_acc_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{ACCEL_CALI_DATA_ID, "device_acc_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
 	{ACCEL_DATA_BLOCK_ID, "device_acc_data_block", SENSOR_DEBUG_DEVICE_TYPE},
+	{ACCEL_SUB_DATA_BLOCK_ID, "device_sub_acc_data_block", SENSOR_DEBUG_DEVICE_TYPE},
+	{ACCEL_DATA_FULL_RANGE_ID, "device_acc_data_full_range", SENSOR_DEBUG_DEVICE_TYPE},
 
+	{ACCEL_SUB_INIT_FAIL_ID, "device_acc_sub_init_fail", SENSOR_DEVICE_TYPE},
+	{ACCEL_SUB_I2C_ERR_ID, "device_acc_sub_i2c_err", SENSOR_DEVICE_TYPE},
+	{ACCEL_SUB_ALLOC_FAIL_ID, "device_acc_sub_alloc_fail", SENSOR_DEVICE_TYPE},
+	{ACCEL_SUB_ESD_REST_ID, "device_acc_sub_esd_reset", SENSOR_DEVICE_TYPE},
+	{ACCEL_SUB_NO_INTERRUPT_ID, "device_acc_sub_no_irq", SENSOR_DEVICE_TYPE},
+	{ACCEL_SUB_FIRST_REPORT_DELAY_COUNT_ID, "device_acc_sub_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
+	{ACCEL_SUB_ORIGIN_DATA_TO_ZERO_ID, "device_acc_sub_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
+	{ACCEL_SUB_CALI_DATA_ID, "device_acc_sub_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{ACCEL_SUB_DATA_FULL_RANGE_ID, "device_acc_sub_data_full_range", SENSOR_DEBUG_DEVICE_TYPE},
 
 	{GYRO_INIT_FAIL_ID, "device_gyro_init_fail", SENSOR_DEVICE_TYPE},
 	{GYRO_I2C_ERR_ID, "device_gyro_i2c_err", SENSOR_DEVICE_TYPE},
@@ -84,7 +109,17 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{GYRO_FIRST_REPORT_DELAY_COUNT_ID, "device_gyro_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
 	{GYRO_ORIGIN_DATA_TO_ZERO_ID, "device_gyro_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{GYRO_CALI_DATA_ID, "device_gyro_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{GYRO_DATA_BLOCK_ID, "device_gyro_data_block", SENSOR_DEBUG_DEVICE_TYPE},
 
+	{GYRO_SUB_INIT_FAIL_ID, "device_gyro_sub_init_fail", SENSOR_DEVICE_TYPE},
+	{GYRO_SUB_I2C_ERR_ID, "device_gyro_sub_i2c_err", SENSOR_DEVICE_TYPE},
+	{GYRO_SUB_ALLOC_FAIL_ID, "device_gyro_sub_alloc_fail", SENSOR_DEVICE_TYPE},
+	{GYRO_SUB_ESD_REST_ID, "device_gyro_sub_esd_reset", SENSOR_DEVICE_TYPE},
+	{GYRO_SUB_NO_INTERRUPT_ID, "device_gyro_sub_no_irq", SENSOR_DEVICE_TYPE},
+	{GYRO_SUB_FIRST_REPORT_DELAY_COUNT_ID, "device_gyro_sub_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
+	{GYRO_SUB_ORIGIN_DATA_TO_ZERO_ID, "device_gyro_sub_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
+	{GYRO_SUB_CALI_DATA_ID, "device_gyro_sub_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{GYRO_SUB_DATA_BLOCK_ID, "device_gyro_sub_data_block", SENSOR_DEBUG_DEVICE_TYPE},
 
 	{MAG_INIT_FAIL_ID, "device_mag_init_fail", SENSOR_DEVICE_TYPE},
 	{MAG_I2C_ERR_ID, "device_mag_i2c_err", SENSOR_DEVICE_TYPE},
@@ -94,6 +129,8 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{MAG_FIRST_REPORT_DELAY_COUNT_ID, "device_mag_rpt_delay", SENSOR_DEBUG_DEVICE_TYPE},
 	{MAG_ORIGIN_DATA_TO_ZERO_ID, "device_mag_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{MAG_CALI_DATA_ID, "device_mag_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{MAG_DATA_BLOCK_ID, "device_mag_data_block_data", SENSOR_DEBUG_DEVICE_TYPE},
+	{MAG_DATA_FULL_RANGE_ID, "device_mag_data_full_range", SENSOR_DEBUG_DEVICE_TYPE},
 
 
 	{SAR_INIT_FAIL_ID, "device_sar_init_fail", SENSOR_DEVICE_TYPE},
@@ -105,6 +142,13 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{SAR_ORIGIN_DATA_TO_ZERO_ID, "device_sar_to_zero", SENSOR_DEBUG_DEVICE_TYPE},
 	{SAR_CALI_DATA_ID, "device_sar_cali_data", SENSOR_DEBUG_DEVICE_TYPE},
 
+	{BAROMETER_I2C_ERR_ID, "device_barometer_i2c_err", SENSOR_DEVICE_TYPE},
+
+	{HALL_I2C_ERR_ID, "device_hall_i2c_err", SENSOR_DEVICE_TYPE},
+
+	{FOLD_DEVICE_FOLDE_COUNT_ID, "device_fold_count", SENSOR_DEVICE_TYPE},
+
+	{FREE_FALL_TRIGGER_ID, "device_free_fall", SENSOR_DEVICE_TYPE},
 
 	{POWER_SENSOR_INFO_ID, "debug_power_sns_info", SENSOR_DEBUG_POWER_TYPE},
 	{POWER_ACCEL_INFO_ID, "debug_power_acc_info", SENSOR_DEBUG_POWER_TYPE},
@@ -216,7 +260,7 @@ static ssize_t hal_info_store(struct device *dev,
 	memset(strbuf, 0, 32);
 	memset(payload, 0, 1024);
 
-	err = sscanf(buf, "%u %u %31s", &event_id, &event_ct, strbuf);
+	err = sscanf(buf, "%hu %hu %31s", &event_id, &event_ct, strbuf);
 
 	if (err < 0) {
 		pr_err("hal_info_store error: err = %d\n", err);
@@ -235,7 +279,7 @@ static ssize_t hal_info_store(struct device *dev,
 	scnprintf(payload, sizeof(payload),
 		"NULL$$EventField@@%s$$FieldData@@%d$$detailData@@%s",
 		g_fb_conf[index].fb_field,
-		event_ct,
+		(int)event_ct,
 		strbuf);
 	pr_info("payload =%s\n", payload);
 
@@ -359,8 +403,13 @@ static int parse_shr_info(struct sensor_fb_cxt *sensor_fb_cxt)
 	unsigned char payload[1024] = {0x00};
 	int fb_len = 0;
 	unsigned char detail_buff[128] = {0x00};
+	uint16_t adsp_event_counts = 0;
 
-	for (count = 0; count < sensor_fb_cxt->adsp_event_counts; count ++) {
+	spin_lock(&sensor_fb_cxt->rw_lock);
+	adsp_event_counts = sensor_fb_cxt->adsp_event_counts;
+	spin_unlock(&sensor_fb_cxt->rw_lock);
+
+	for (count = 0; count < adsp_event_counts && count < EVNET_NUM_MAX; count ++) {
 		event_id = sensor_fb_cxt->fb_smem.event[count].event_id;
 		pr_info("event_id =%d, count =%d\n", event_id, count);
 
@@ -384,10 +433,11 @@ static int parse_shr_info(struct sensor_fb_cxt *sensor_fb_cxt)
 			sensor_fb_cxt->fb_smem.event[count].buff[1],
 			sensor_fb_cxt->fb_smem.event[count].buff[2]);
 		fb_len += scnprintf(payload, sizeof(payload),
-				"NULL$$EventField@@%s$$FieldData@@%d$$detailData@@%s",
+				"NULL$$EventField@@%s$$FieldData@@%d$$detailData@@%s$$SensorName@@0x%x",
 				g_fb_conf[index].fb_field,
 				sensor_fb_cxt->fb_smem.event[count].count,
-				detail_buff);
+				detail_buff,
+				sensor_fb_cxt->fb_smem.event[count].name);
 		pr_info("payload =%s\n", payload);
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 		oplus_kevent_fb(FB_SENSOR, g_fb_conf[index].fb_event_id, payload);
@@ -430,7 +480,7 @@ static int sensor_report_thread(void *arg)
 		spin_unlock(&sensor_fb_cxt->rw_lock);
 	}
 
-	pr_info("step2 ret =%s\n", ret);
+	pr_info("step2 ret =%d\n", ret);
 	return ret;
 }
 
@@ -453,6 +503,7 @@ static ssize_t sensor_list_read_proc(struct file *file, char __user *buf,
 
 static const struct proc_ops sensor_list_fops = {
 	.proc_read = sensor_list_read_proc,
+	.proc_lseek = default_llseek,
 };
 
 static int sensor_polling_thread(void *arg)
@@ -527,7 +578,7 @@ static int enable_monitor_sensor(struct sensor_fb_cxt *sensor_fb_cxt)
 	}
 
 	fb_phys_addr = scp_get_reserve_mem_phys(SENS_FB_MEM_ID);
-	pr_info("SENS_FB_MEM_ID = %u\n", fb_phys_addr);
+	pr_info("SENS_FB_MEM_ID = %llu\n", fb_phys_addr);
 	memset(&cust_cmd, 0, sizeof(cust_cmd));
 	cust_cmd.command = CUST_ACTION_SET_MEM_ADDR;
 	cust_cmd.rx_len = 0;
@@ -632,7 +683,7 @@ static int sensor_feedback_probe(struct platform_device *pdev)
 	wake_up_process(sensor_fb_cxt->report_task);
 
 	INIT_DELAYED_WORK(&sensor_fb_cxt->enable_sensor_work, enable_monitor_sensor_work);
-	schedule_delayed_work(&sensor_fb_cxt->enable_sensor_work, msecs_to_jiffies(2000));
+	schedule_delayed_work(&sensor_fb_cxt->enable_sensor_work, msecs_to_jiffies(5000));
 
 	pr_info("sensor_feedback_init success\n");
 	return 0;

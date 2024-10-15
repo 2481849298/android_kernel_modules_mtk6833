@@ -7,6 +7,7 @@
 #include <linux/i2c.h>
 
 #ifdef CONFIG_OPLUS_CHARGER_MTK
+#include <linux/version.h>
 #include <linux/slab.h>
 #include <linux/irq.h>
 #include <linux/miscdevice.h>
@@ -29,9 +30,9 @@
 	|| defined(CONFIG_OPLUS_CHARGER_MTK6833) \
 	|| defined(CONFIG_OPLUS_CHARGER_MTK6781)
 #include <linux/module.h>
-
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 #include <mt-plat/mtk_gpio.h>
-
+#endif
 #include <mt-plat/mtk_rtc.h>
 #elif defined(CONFIG_OPLUS_CHARGER_MTK6873)
 #include <linux/module.h>
@@ -1141,8 +1142,13 @@ int bq25601d_otg_enable(void)
 	}
 #endif /* CONFIG_OPLUS_CHARGER_MTK */
 
-	bq25601d_config_interface(chip, REG00_BQ25601D_ADDRESS,
+	rc = bq25601d_config_interface(chip, REG00_BQ25601D_ADDRESS,
 			REG00_BQ25601D_SUSPEND_MODE_DISABLE, REG00_BQ25601D_SUSPEND_MODE_MASK);
+	if (rc) {
+		chg_err("Couldn't enable SUSPEND mode rc=%d\n", rc);
+	} else {
+		chg_debug("bq25601d_SUSPEND_enable rc=%d\n", rc);
+	}
 
 	rc = bq25601d_config_interface(chip, REG01_BQ25601D_ADDRESS,
 			REG01_BQ25601D_OTG_ENABLE, REG01_BQ25601D_OTG_MASK);
@@ -1531,6 +1537,8 @@ int bq25601d_hardware_init(void)
 	return true;
 }
 
+
+#if !defined(CONFIG_OPLUS_CHARGER_MTK6873)
 #ifdef CONFIG_OPLUS_RTC_DET_SUPPORT
 static int rtc_reset_check(void)
 {
@@ -1576,7 +1584,6 @@ close_time:
 	return 0;
 }
 #endif /* CONFIG_OPLUS_RTC_DET_SUPPORT */
-#if !defined(CONFIG_OPLUS_CHARGER_MTK6873)
 #if !defined(CONFIG_OPLUS_CHARGER_MTK6781)
 extern bool oplus_chg_get_shortc_hw_gpio_status(void);
 #endif
@@ -1665,6 +1672,7 @@ struct oplus_chg_operations  bq25601d_chg_ops = {
 
 static int bq2560x_detect_device(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret;
 	int reg_val;
 	enum bq2560x_part_no part_no;
@@ -1706,6 +1714,7 @@ static int bq2560x_detect_device(void)
 		chg_err("!!!register_charger_devinfo fail\n");
 
 	 return ret;
+#endif
 }
 #endif
 

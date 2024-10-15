@@ -5,7 +5,6 @@ obj-y 	+= platform.o
 obj-$(CONFIG_OPLUS_FEATURE_FEEDBACK) 	+= feedback/
 obj-$(CONFIG_OPLUS_FEATURE_UBOOT_LOG) 	+= uboot_log/
 obj-$(CONFIG_OPLUS_FEATURE_SHUTDOWN_DETECT)    += shutdown_detect/
-obj-$(CONFIG_OPLUS_FEATURE_SLABTRACE_DEBUG) +=  slabtrace/
 obj-$(CONFIG_OPLUS_FEATURE_OPROJECT) 	+= oplus_project/
 obj-$(CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE) 	+= qcom_minidump/
 obj-$(CONFIG_OPLUS_FEATURE_HUNG_TASK_ENHANCE) += hung_task_enhance/
@@ -27,10 +26,6 @@ endif
 #ifdef OPLUS_FEATURE_QCOM_PMICWD
 obj-$(CONFIG_OPLUS_FEATURE_QCOM_PMICWD)     += qcom_pmicwd/
 #endif /* OPLUS_FEATURE_QCOM_PMICWD */
-
-#ifdef OPLUS_FEATURE_MM_OSVELTE
-obj-y += mm_osvelte/
-#endif /* OPLUS_FEATURE_MM_OSVELTE */
 
 #ifdef OPLUS_FEATURE_MM_FEEDBACK
 obj-$(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)         += oplus_mm_fb/
@@ -62,6 +57,15 @@ obj-$(CONFIG_OPLUS_FEATURE_RT_OPT_INFO) += rt_info/
 obj-$(CONFIG_OPLUS_FEATURE_HANS_GKI) += oplus_hans/
 #endif /* OPLUS_FEATURE_HANS */
 
-#ifdef OPLUS_FEATURE_LOG_CORE
-obj-$(CONFIG_OPLUS_FEATURE_LOG_CORE) += olc/
-#endif /* OPLUS_FEATURE_LOG_CORE */
+#ifdef OPLUS_FEATURE_OLC
+obj-$(CONFIG_OPLUS_FEATURE_OLC) += olc/
+#endif /*OPLUS_FEATURE_OLC */
+
+#ifdef CONFIG_OPLUS_FEATURE_FDLEAK_CHECK
+obj-$(CONFIG_OPLUS_FEATURE_FDLEAK_CHECK)     += oplus_fdleak/
+#endif /*CONFIG_OPLUS_FEATURE_FDLEAK_CHECK*/
+
+#ifdef OPLUS_FEATURE_LAST_BOOT_REASON
+obj-$(CONFIG_OPLUS_FEATURE_LAST_BOOT_REASON) += last_boot_reason/
+#endif /*OPLUS_FEATURE_LAST_BOOT_REASON*/
+

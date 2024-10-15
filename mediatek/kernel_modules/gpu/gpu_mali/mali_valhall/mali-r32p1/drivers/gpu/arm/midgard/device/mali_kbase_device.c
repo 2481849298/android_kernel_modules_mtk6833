@@ -185,7 +185,10 @@ static int mali_oom_notifier_handler(struct notifier_block *nb,
 	dev_err(kbdev->dev, "OOM notifier: dev %s  %lu kB\n", kbdev->devname,
 		kbdev_alloc_total);
 
-	mutex_lock(&kbdev->kctx_list_lock);
+	if (!mutex_trylock(&kbdev->kctx_list_lock)) {
+			dev_info(kbdev->dev, "lock held, bypass OOM notifier dump");
+			return NOTIFY_OK;
+	}
 
 	list_for_each_entry (kctx, &kbdev->kctx_list, kctx_list_link) {
 		struct pid *pid_struct;
@@ -293,9 +296,9 @@ int kbase_device_misc_init(struct kbase_device * const kbdev)
 
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
 	kbdev->ged_log_buf_hnd_kbase = 0;
-	kbdev->ged_log_buf_hnd_kbase = ged_log_buf_alloc(4096, 128 * 4096,
+	kbdev->ged_log_buf_hnd_kbase = ged_log_buf_alloc(8192, 256 * 8192,
 	                                         GED_LOG_BUF_TYPE_QUEUEBUFFER,
-	                                         "mali_kbase", "mali_kbase");
+	                                         "mali_exception", "mali_exception");
 #endif
 
 	init_waitqueue_head(&kbdev->cache_clean_wait);
