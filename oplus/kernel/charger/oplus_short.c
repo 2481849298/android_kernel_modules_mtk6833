@@ -43,7 +43,9 @@
 #endif
 #include <linux/ktime.h>
 #include <linux/kernel.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/system/boot_mode.h>
+#endif
 #endif
 
 #include "oplus_charger.h"

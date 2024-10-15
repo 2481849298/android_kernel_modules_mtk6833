@@ -28,8 +28,8 @@ struct user_logger_entry_compat {
 	__u16		__pad;
 	__s32		pid;
 	__s32		tid;
-	__s32		sec;
-	__s32		nsec;
+	__s64		sec;
+	__s64		nsec;
 	char		msg[0];
 };
 
@@ -53,13 +53,13 @@ struct logger_entry {
 	__u16		hdr_size;
 	__s32		pid;
 	__s32		tid;
-	__s32		sec;
-	__s32		nsec;
+	__s64		sec;
+	__s64		nsec;
 	kuid_t		euid;
 	char		msg[0];
 };
 
-#define LOGGER_LOG_MAIN	"svelte_log"	/* radio-related messages */
+#define LOGGER_LOG_MAIN	"osvelte"	/* radio-related messages */
 
 #define LOGGER_ENTRY_MAX_PAYLOAD	4076
 

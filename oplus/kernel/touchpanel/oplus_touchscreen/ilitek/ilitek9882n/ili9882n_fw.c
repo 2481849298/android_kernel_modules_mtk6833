@@ -968,7 +968,7 @@ static int ilitek_tdd_fw_hex_open(u8 op, u8 *pfw)
         filp_close(f, NULL);
         ilits->tp_fw.size = fsize;
     } else {
-        ILI_INFO("oppo fw update already request firmware\n");
+        ILI_INFO("oplus fw update already request firmware\n");
     }
 
     if (ERR_ALLOC_MEM(ilits->tp_fw.data)
@@ -1083,7 +1083,7 @@ out:
     ili_ic_get_fw_ver();
     ili_ic_get_tp_info();
     ili_ic_get_panel_info();
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 
     if (ilits->debug_mode_sta
         && ilits->actual_tp_mode !=
@@ -1095,7 +1095,7 @@ out:
         }
     }
 
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
     if (set_esd_check) {
         set_esd_check = false;

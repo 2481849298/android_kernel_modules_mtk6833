@@ -422,42 +422,22 @@ static void oplus_show_mem(void)
 		K(unaccounted));
 }
 
-static int dump_tasks_info(bool verbose)
+static int dump_tasks_info(bool unused)
 {
 	struct task_struct *p;
 	struct task_struct *tsk;
-	short tsk_oom_adj = 0;
-	unsigned long tsk_nr_ptes = 0;
-	char task_state = 0;
+	char task_state = ' ';
 	char frozen_mark = ' ';
-	short service_adj = 500;
-	u64 wm_task_rss = SZ_256M >> PAGE_SHIFT;
+	unsigned long tsk_nr_ptes = 0;
+	pid_t ppid = 0;
 
-	pr_info("[ pid ]   uid  tgid total_vm      rss    nptes     swap    sheme   adj s name\n");
+	pr_info("comm             32   uid s f   pid  ppid   oom       vss    anon    file   shmem    swap\n");
 
 	rcu_read_lock();
 	for_each_process(p) {
 		tsk = find_lock_task_mm(p);
-		if (!tsk) {
-			/*
-			 * This is a kthread or all of p's threads have already
-			 * detached their mm's.  There's no need to report
-			 * them; they can't be oom killed anyway.
-			 */
+		if (!tsk)
 			continue;
-		}
-
-		tsk_oom_adj = tsk->signal->oom_score_adj;
-
-		if (!verbose && tsk_oom_adj &&
-		    (tsk_oom_adj <= service_adj) &&
-		    (get_mm_rss(tsk->mm) +
-		     get_mm_counter(tsk->mm, MM_SWAPENTS)) < wm_task_rss) {
-			task_unlock(tsk);
-			continue;
-		}
-
-		/* consolidate page table accounting */
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 		tsk_nr_ptes = PTRS_PER_PTE * sizeof(pte_t) * atomic_long_read(&tsk->mm->nr_ptes);
 #else
@@ -466,22 +446,22 @@ static int dump_tasks_info(bool verbose)
 		task_state = task_state_to_char(tsk);
 		/* check whether we have freezed a task. */
 		frozen_mark = frozen(tsk) ? '*' : ' ';
+		ppid = task_pid_nr(rcu_dereference(tsk->real_parent));
 
-		pr_info("[%5d] %5d %5d %8lu %8lu %8lu %8lu %8lu %5hd %c %s%c\n",
-			tsk->pid,
+		pr_info("%-16s %2d %5d %c %c %5d %5d %5d %9lu %7lu %7lu %7lu %7lu\n",
+			tsk->comm, test_ti_thread_flag(task_thread_info(tsk), TIF_32BIT) != 0,
 			from_kuid(&init_user_ns, task_uid(tsk)),
-			tsk->tgid, tsk->mm->total_vm,
-			get_mm_rss(tsk->mm),
-			tsk_nr_ptes / SZ_1K,
-			get_mm_counter(tsk->mm, MM_SWAPENTS),
+			task_state, frozen_mark,
+			tsk->pid, ppid, tsk->signal->oom_score_adj,
+			tsk->mm->total_vm,
+			get_mm_counter(tsk->mm, MM_ANONPAGES),
+			get_mm_counter(tsk->mm, MM_FILEPAGES),
 			get_mm_counter(tsk->mm, MM_SHMEMPAGES),
-			tsk_oom_adj,
-			task_state,
-			tsk->comm,
-			frozen_mark);
+			get_mm_counter(tsk->mm, MM_SWAPENTS));
 		task_unlock(tsk);
 	}
 	rcu_read_unlock();
+
 	return 0;
 }
 

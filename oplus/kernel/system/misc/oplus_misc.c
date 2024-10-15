@@ -5,7 +5,7 @@
 /*
  * oplus_misc.c
  *
- * api interface about oplus
+ * api interface about oneplus
  *
  */
 #include <linux/reboot.h>

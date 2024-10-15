@@ -289,13 +289,13 @@ static int anc_fb_state_chg_callback(struct notifier_block *nb, unsigned long va
                 anc_data->fb_black = 1;
                 netlink_msg = ANC_NETLINK_EVENT_SCR_OFF;
                 pr_info("[anc] NET SCREEN OFF!\n");
-                netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
+                anc_cap_netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
                 break;
             case FB_BLANK_UNBLANK:
                 anc_data->fb_black = 0;
                 netlink_msg = ANC_NETLINK_EVENT_SCR_ON;
                 pr_info("[anc] NET SCREEN ON!\n");
-                netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
+                anc_cap_netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
                 break;
             default:
                 pr_err("[anc] Unknown screen state!\n");
@@ -338,7 +338,7 @@ static ssize_t forward_netlink_event_set(struct device *p_dev, struct device_att
         return -EINVAL;
     }
 
-    return netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
+    return anc_cap_netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
 }
 static DEVICE_ATTR(netlink_event, S_IWUSR, NULL, forward_netlink_event_set);
 #endif
@@ -597,7 +597,7 @@ static const struct attribute_group attribute_group = {
 static void anc_do_irq_work(struct work_struct *ws) {
 #ifdef ANC_USE_NETLINK
     char netlink_msg = (char)ANC_NETLINK_EVENT_IRQ;
-    netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
+    anc_cap_netlink_send_message_to_user(&netlink_msg, sizeof(netlink_msg));
 #else
     (void *)ws;
     wake_up_interruptible(&epoll_waitqueue);
@@ -1342,7 +1342,7 @@ struct spi_driver spi_driver = {.driver =
 
 static int __init ancfp_init(void) {
     int rc = 0;
-    if (FP_JIIOV_0101 != (rc = get_fpsensor_type())) {
+    if (FP_JIIOV_0101 != get_fpsensor_type()) {
         pr_err("%s, found not jiiov sensor rc:%d\n", __func__, rc);
         rc = -EINVAL;
         return rc;
@@ -1364,7 +1364,7 @@ static int __init ancfp_init(void) {
     }
 
 #ifdef ANC_USE_NETLINK
-    anc_netlink_init();
+    anc_cap_netlink_init();
 #endif
 
     return rc;
@@ -1373,7 +1373,7 @@ static int __init ancfp_init(void) {
 static void __exit ancfp_exit(void) {
     pr_info("%s\n", __func__);
 #ifdef ANC_USE_NETLINK
-    anc_netlink_exit();
+    anc_cap_netlink_exit();
 #endif
 #ifdef ANC_USE_SPI
     spi_unregister_driver(&anc_driver);

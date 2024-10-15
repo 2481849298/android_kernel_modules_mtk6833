@@ -26,6 +26,16 @@
 #define ohm_err_deferred(fmt, ...) \
         printk_deferred(KERN_ERR "[OHM_ERR][%s]"fmt, __func__, ##__VA_ARGS__)
 
+#if IS_ENABLED(CONFIG_CGROUP_SCHED)
+#define SA_CGROUP_SYS_BACKGROUND	(1)
+#endif
+#define SA_CGROUP_FOREGROUND		(2)
+#define SA_CGROUP_BACKGROUND		(3)
+#if IS_ENABLED(CONFIG_CGROUP_SCHED)
+#define SA_CGROUP_TOP_APP			(4)
+#define SA_CGROUP_UX				(9)
+#endif
+
 #define OHM_FLASH_TYPE_EMC 1
 #define OHM_FLASH_TYPE_UFS 2
 #define SA_CGROUP_FOREGROUND        (2)
@@ -70,6 +80,7 @@ enum {
         OHM_RLIMIT_MON,
         OHM_ION_MON,
 		OHM_MEM_VMA_ALLOC_ERR,
+        OHM_BLK_MON,
         OHM_TYPE_TOTAL
 };
 
@@ -100,6 +111,17 @@ struct sched_stat_common {
         u64 total_cnt;
 };
 
+struct long_wait_record {
+	u32 pid;
+	u32 priv;
+	u64 timestamp;
+	u32 ms;
+};
+
+#define LWR_SHIFT	3
+#define LWR_MASK	((1ULL << LWR_SHIFT) - 1)
+#define LWR_SIZE	(1ULL << LWR_SHIFT)
+
 struct sched_stat_para {
         bool ctrl;
         bool logon;
@@ -107,10 +129,17 @@ struct sched_stat_para {
         int low_thresh_ms;
         int high_thresh_ms;
         u64 delta_ms;
+	spinlock_t lock;
         struct sched_stat_common all;
         struct sched_stat_common fg;
         struct sched_stat_common ux;
+	struct sched_stat_common top;
+	struct sched_stat_common bg;
+	struct sched_stat_common sysbg;
+	atomic_t lwr_index;
+	struct long_wait_record last_n_lwr[LWR_SIZE];
 };
+extern struct sched_stat_para sched_para[OHM_SCHED_TOTAL];
 
 struct alloc_wait_para {
 	u64 total_alloc_wait_max_order;
@@ -119,12 +148,24 @@ struct alloc_wait_para {
 	struct sched_stat_common total_alloc_wait;
 	struct sched_stat_common fg_alloc_wait;
 	struct sched_stat_common ux_alloc_wait;
+	atomic_t lwr_index;
+	struct long_wait_record last_n_lwr[LWR_SIZE];
 };
 
 struct ion_wait_para {
 	struct sched_stat_common ux_ion_wait;
 	struct sched_stat_common fg_ion_wait;
 	struct sched_stat_common total_ion_wait;
+	atomic_t lwr_index;
+	struct long_wait_record last_n_lwr[LWR_SIZE];
+};
+
+struct blk_wait_para {
+	int wait_h_ms;
+	int wait_l_ms;
+	struct sched_stat_common wait_stat;
+	atomic_t lwr_index;
+	struct long_wait_record last_n_lwr[LWR_SIZE];
 };
 
 extern void ohm_schedstats_record(int sched_type, struct task_struct *task, u64 delta_ms);

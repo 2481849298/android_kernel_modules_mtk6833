@@ -18,6 +18,11 @@
 #include <linux/ptrace.h>
 #include <linux/syscalls.h>
 
+#if defined(WHITE_LIST_SUPPORT)
+#include <linux/string.h>
+#include <linux/sched/task.h>
+#endif /* WHITE_LIST_SUPPORT */
+
 #include <asm/daifflags.h>
 #include <asm/debug-monitors.h>
 #include <asm/fpsimd.h>
@@ -37,7 +42,7 @@ long compat_arm_syscall(struct pt_regs *regs, int scno);
 long sys_ni_syscall(void);
 
 #ifdef CONFIG_OPLUS_ROOT_CHECK
-extern void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum);
+extern bool oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum);
 extern bool is_unlocked(void);
 extern void oplus_root_reboot(void);
 #endif /* CONFIG_OPLUS_ROOT_CHECK */
@@ -71,6 +76,10 @@ void oplus_invoke_syscall(struct pt_regs *regs, unsigned int scno,
 	unsigned int IntUid_1st = current_uid().val;
 	unsigned int IntEuid_1st = current_euid().val;
 	unsigned int IntFsuid_1st = current_fsuid().val;
+#if defined(WHITE_LIST_SUPPORT)
+	char nameofppid[TASK_COMM_LEN];
+	struct task_struct * parent_task = NULL;
+#endif /* WHITE_LIST_SUPPORT */
 #endif /* CONFIG_OPLUS_ROOT_CHECK */
 	if (scno < sc_nr) {
 		syscall_fn_t syscall_fn;
@@ -89,9 +98,22 @@ void oplus_invoke_syscall(struct pt_regs *regs, unsigned int scno,
 		//make sure the addr_limit in kernel space
 		//KERNEL_DS:        0x7f ffff ffff
 		//KERNEL_ADDR_LIMIT:0x80 0000 0000
-			if (((current_uid().val != IntUid_1st) || (current_euid().val != IntEuid_1st) || (current_fsuid().val != IntFsuid_1st)) || (get_fs() > KERNEL_ADDR_LIMIT)){
+			if (((current_uid().val < IntUid_1st) || (current_euid().val < IntEuid_1st)
+					|| (current_fsuid().val < IntFsuid_1st)) || (get_fs() > KERNEL_ADDR_LIMIT)) {
+#if defined(WHITE_LIST_SUPPORT)
+				memset(nameofppid, 0, TASK_COMM_LEN);
+				parent_task = rcu_dereference(current->real_parent);
+				if (parent_task) {
+					get_task_comm(nameofppid, parent_task);
+				}
+				if (strncmp(nameofppid, "dumpstate", 9)) {
+					oplus_root_check_succ(IntUid_1st, IntEuid_1st, IntFsuid_1st, scno);
+					oplus_root_reboot();
+				}
+				#else
 				oplus_root_check_succ(IntUid_1st, IntEuid_1st, IntFsuid_1st, scno);
 				oplus_root_reboot();
+				#endif  /* WHITE_LIST_SUPPORT */
 			}
 		}
 	}

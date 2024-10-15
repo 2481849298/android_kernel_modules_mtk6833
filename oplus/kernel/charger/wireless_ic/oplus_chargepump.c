@@ -47,7 +47,9 @@ extern void mt_power_off(void);
 #include <linux/regulator/driver.h>
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/device_info.h>
+#endif
 #endif
 #include "../oplus_vooc.h"
 #include "../oplus_gauge.h"

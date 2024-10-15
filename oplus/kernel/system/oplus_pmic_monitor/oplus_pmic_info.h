@@ -43,7 +43,7 @@ struct PMICRegStruct {
 };
 
 struct PMICRecordStruct {
-	struct PMICRegStruct pmic_pon_poff_reason[8]; /*PM_MAX_NUM_PMICS is 8*/
+	struct PMICRegStruct pmic_pon_poff_reason[8]; //PM_MAX_NUM_PMICS is 8
 };
 
 struct PMICHistoryStruct {
@@ -52,27 +52,28 @@ struct PMICHistoryStruct {
 	struct PMICRecordStruct pmic_record[MAX_HISTORY_COUNT];
 };
 
-/*kernel struct*/
+//kernel struct
 struct PMICRegKernelStruct {
-	/*u64 pon_reason;*/
-	u8 PON_PON_REASON1;				/*0x8C0*/
-	u8 PON_RESERVE1;				/*0x8C1*/
-	u8 PON_WARM_RESET_REASON1;		/*0x8C2*/
-	u8 PON_RESERVE2;				/*0x8C3*/
-	u8 PON_ON_REASON;				/*0x8C4*/
-	u8 PON_POFF_REASON1;			/*0x8C5*/
-	u8 PON_RESERVE3;				/*0x8C6*/
-	u8 PON_OFF_REASON;				/*0x8C7*/
 
-	/*u64 fault_reason;*/
-	u8 PON_FAULT_REASON1;			/*0x8C8*/
-	u8 PON_FAULT_REASON2;			/*0x8C9*/
-	u8 PON_S3_RESET_REASON;			/*0x8CA*/
-	u8 PON_SOFT_RESET_REASON1;		/*0x8CB*/
-	u8 PON_RESERVE4;				/*0x8CC*/
-	u8 PON_RESERVE5;				/*0x8CD*/
-	u8 PON_RESERVE6;				/*0x8CE*/
-	u8 PON_RESERVE7;				/*0x8DF*/
+	//u64 pon_reason;
+	u8 PON_PON_REASON1;				//0x8C0
+	u8 PON_RESERVE1;				//0x8C1
+	u8 PON_WARM_RESET_REASON1;		//0x8C2
+	u8 PON_RESERVE2;				//0x8C3
+	u8 PON_ON_REASON;				//0x8C4	
+	u8 PON_POFF_REASON1;			//0x8C5	
+	u8 PON_RESERVE3;				//0x8C6	
+	u8 PON_OFF_REASON;				//0x8C7	
+
+	//u64 fault_reason;
+	u8 PON_FAULT_REASON1;			//0x8C8
+	u8 PON_FAULT_REASON2;			//0x8C9
+	u8 PON_S3_RESET_REASON;			//0x8CA
+	u8 PON_SOFT_RESET_REASON1;		//0x8CB
+	u8 PON_RESERVE4;				//0x8CC
+	u8 PON_RESERVE5;				//0x8CD
+	u8 PON_RESERVE6;				//0x8CE	
+	u8 PON_RESERVE7;				//0x8DF	
 
 
 	u32 ldo_ocp_status;
@@ -82,7 +83,7 @@ struct PMICRegKernelStruct {
 };
 
 struct PMICRecordKernelStruct {
-	struct PMICRegKernelStruct pmic_pon_poff_reason[8]; /*PM_MAX_NUM_PMICS is 8*/
+	struct PMICRegKernelStruct pmic_pon_poff_reason[8]; //PM_MAX_NUM_PMICS is 8
 };
 
 struct PMICHistoryKernelStruct {
@@ -126,7 +127,7 @@ typedef struct
 */
 
 struct PMICStateMachineStruct {
-	u8 state_record[MAX_STATE_RECORDS * 4]; /* pm_pon_log_type state_record[MAX_STATE_RECORDS] */
+	u8 state_record[MAX_STATE_RECORDS*4]; /* pm_pon_log_type state_record[MAX_STATE_RECORDS] */
 };
 
 struct PMICOcpStruct {
@@ -186,4 +187,4 @@ static struct kobj_attribute _name##_gen3_attr = {	\
 
 void *get_pmic_history(void);
 
-#endif /*__OPLUS_PMIC_INFO_H__*/
+#endif

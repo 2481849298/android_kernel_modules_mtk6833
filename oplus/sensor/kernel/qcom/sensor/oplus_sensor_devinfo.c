@@ -13,6 +13,14 @@
 #define ALIGN4(s) ((sizeof(s) + 3)&(~0x3))
 #define SAR_MAX_CH_NUM 5
 
+#define MAX_CMDLINE_PARAM_LEN 512
+char sns_dsi_display_primary[MAX_CMDLINE_PARAM_LEN];
+char sns_dsi_display_secondary[MAX_CMDLINE_PARAM_LEN];
+
+EXPORT_SYMBOL(sns_dsi_display_primary);
+EXPORT_SYMBOL(sns_dsi_display_secondary);
+
+
 extern int oplus_press_cali_data_init(void);
 extern void oplus_press_cali_data_clean(void);
 
@@ -24,7 +32,7 @@ struct sensor_info * g_chip = NULL;
 struct proc_dir_entry *sensor_proc_dir = NULL;
 static struct oplus_als_cali_data *gdata = NULL;
 static uint32_t g_ldo_enable;
-
+static bool g_fold_dev_supt = false;
 
 
 static char* als_rear_feature[] = {
@@ -37,7 +45,7 @@ __attribute__((weak)) void oplus_device_dir_redirect(struct sensor_info * chip)
 	pr_info("%s oplus_device_dir_redirect \n", __func__);
 };
 
-__attribute__((weak)) unsigned int get_serialID()
+__attribute__((weak)) unsigned int get_serialID(void)
 {
 	return 0;
 };
@@ -534,6 +542,39 @@ static void parse_accelerometer_sensor_dts(struct sensor_hw *hw, struct device_n
 	}
 }
 
+static int parse_pad_light_sensor_dts(struct sensor_hw *hw, struct device_node *ch_node)
+{
+	int rc = 0;
+	int di = 0;
+	char *feature[] = {
+		"first-source",
+		"second-source"
+	};
+	struct sns_display_info *dsi_info = NULL;
+
+	dsi_info = kzalloc(sizeof(struct sns_display_info), GFP_KERNEL);
+	if (dsi_info == NULL) {
+		rc = -ENOMEM;
+		printk("[SNS] %s:kzalloc fail %d\n", __func__, rc);
+		return rc;
+	}
+
+	for (di = 0; di < ARRAY_SIZE(feature); di++) {
+		rc = of_property_read_string(ch_node, feature[di], (const char **)&dsi_info->pad_light_supt_cmdline[di]);
+
+		if(!rc && strstr(sns_dsi_display_primary, dsi_info->pad_light_supt_cmdline[di])) {
+			hw->feature.feature[0] = di;
+			pr_info("[SNS] %d panel source: %s\n", di, dsi_info->pad_light_supt_cmdline[di]);
+		}
+	}
+	pr_info("[SNS] pad_light panel_idx: %d\n", hw->feature.feature[0]);
+
+	kfree(dsi_info);
+	dsi_info = NULL;
+
+	return rc;
+}
+
 static void parse_each_physical_sensor_dts(struct sensor_hw* hw, struct device_node *ch_node)
 {
 	if (0 == strncmp(ch_node->name, "msensor", 7)) {
@@ -554,6 +595,8 @@ static void parse_each_physical_sensor_dts(struct sensor_hw* hw, struct device_n
 		parse_light_rear_sensor_dts(hw, ch_node);
 	} else if (0 == strncmp(ch_node->name, "gsensor", 7)) {
 		parse_accelerometer_sensor_dts(hw, ch_node);
+	} else if (0 == strncmp(ch_node->name, "pad_light", 9)) {
+		parse_pad_light_sensor_dts(hw, ch_node);
 	} else {
 		/*do nothing */
 	}
@@ -626,12 +669,16 @@ static void parse_mag_fusion_sensor_dts(struct sensor_algorithm *algo, struct de
 	int value = 0;
 
 	rc = of_property_read_u32(ch_node, "fusion-type", &value);
-
 	if (!rc) {
 		algo->feature[0] = value;
 	}
 
-	SENSOR_DEVINFO_DEBUG("fusion-type :%d\n", algo->feature[0]);
+	rc = of_property_read_u32(ch_node, "fold-feature", &value);
+	if (!rc) {
+		algo->feature[1] = value;
+	}
+
+	SENSOR_DEVINFO_DEBUG("fusion-type:%d, fold-feature:%d\n", algo->feature[0], algo->feature[1]);
 }
 
 static void parse_oplus_measurement_sensor_dts(struct sensor_algorithm *algo, struct device_node *ch_node)
@@ -686,6 +733,14 @@ static void oplus_sensor_parse_dts(struct platform_device *pdev)
 	struct sensor_hw *hw = NULL;
 	struct sensor_algorithm *algo = NULL;
 	pr_info("start \n");
+	pr_info("[SNS] sns_dsi_display_primary = %s \n", sns_dsi_display_primary);
+	pr_info("[SNS] sns_dsi_display_secondary = %s \n", sns_dsi_display_secondary);
+
+	if (of_property_read_bool(node, "is-folding-device")) {
+		g_fold_dev_supt = true;
+	} else {
+		g_fold_dev_supt = false;
+	}
 
 	for_each_child_of_node(node, ch_node) {
 		is_virtual_sensor = false;
@@ -728,7 +783,7 @@ static void oplus_sensor_parse_dts(struct platform_device *pdev)
 			parse_each_physical_sensor_dts(hw, ch_node);
 		} else {
 			chip->a_vector[sensor_type].sensor_id = sensor_type;
-			SENSOR_DEVINFO_DEBUG("chip->a_vector[%d].sensor_id : sensor_type %d",
+			SENSOR_DEVINFO_DEBUG("chip->a_vector[%d].sensor_id %d: sensor_type %d",
 				sensor_type, chip->a_vector[sensor_type].sensor_id, sensor_type);
 			algo = &chip->a_vector[sensor_type];
 			parse_each_virtual_sensor_dts(algo, ch_node);
@@ -1168,36 +1223,43 @@ static ssize_t row_coe_write_proc(struct file *file, const char __user *buf,
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 static const struct proc_ops als_type_fops = {
 	.proc_read = als_type_read_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops red_max_lux_fops = {
 	.proc_read = red_max_lux_read_proc,
 	.proc_write = red_max_lux_write_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops white_max_lux_fops = {
 	.proc_read = white_max_lux_read_proc,
 	.proc_write = white_max_lux_write_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops blue_max_lux_fops = {
 	.proc_read = blue_max_lux_read_proc,
 	.proc_write = blue_max_lux_write_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops green_max_lux_fops = {
 	.proc_read = green_max_lux_read_proc,
 	.proc_write = green_max_lux_write_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops cali_coe_fops = {
 	.proc_read = cali_coe_read_proc,
 	.proc_write = cali_coe_write_proc,
+	.proc_lseek = default_llseek,
 };
 
 static const struct proc_ops row_coe_fops = {
 	.proc_read = row_coe_read_proc,
 	.proc_write = row_coe_write_proc,
+	.proc_lseek = default_llseek,
 };
 #else
 static struct file_operations als_type_fops = {
@@ -1235,7 +1297,7 @@ static struct file_operations row_coe_fops = {
 };
 #endif
 
-static int oplus_als_cali_data_init()
+static int oplus_als_cali_data_init(void)
 {
 	int rc = 0;
 	struct proc_dir_entry *pentry;
@@ -1418,14 +1480,20 @@ static int oplus_devinfo_probe(struct platform_device *pdev)
 	if (!sensor_proc_dir) {
 		pr_err("can't create proc_sensor proc\n");
 		rc = -EFAULT;
+		kfree(gdata);
+		gdata = NULL;
+		g_chip = NULL;
 		return rc;
 	}
 	oplus_press_cali_data_init();
 	rc = oplus_als_cali_data_init();
 
 	if (rc < 0) {
+		proc_remove(sensor_proc_dir);
+		sensor_proc_dir = NULL;
 		kfree(gdata);
 		gdata = NULL;
+		g_chip = NULL;
 	}
 	if (g_ldo_enable) {
 		sensor_ldo_init(&pdev->dev);
@@ -1435,6 +1503,15 @@ static int oplus_devinfo_probe(struct platform_device *pdev)
 
 static int oplus_devinfo_remove(struct platform_device *pdev)
 {
+	if (g_chip) {
+		g_chip = NULL;
+	}
+
+	if (sensor_proc_dir) {
+		proc_remove(sensor_proc_dir);
+		sensor_proc_dir = NULL;
+	}
+
 	if (gdata) {
 		kfree(gdata);
 		gdata = NULL;
@@ -1469,6 +1546,14 @@ static int __init oplus_devinfo_init(void)
 }
 
 arch_initcall(oplus_devinfo_init);
+
+module_param_string(dsi_display0, sns_dsi_display_primary, MAX_CMDLINE_PARAM_LEN, 0600);
+MODULE_PARM_DESC(dsi_display0,
+	"oplus_sensor.dsi_display0=<display node> for primary dsi display node name");
+
+module_param_string(dsi_display1, sns_dsi_display_secondary, MAX_CMDLINE_PARAM_LEN, 0600);
+MODULE_PARM_DESC(dsi_display1,
+	"oplus_sensor.dsi_display1=<display node> for secondary dsi display node name");
 
 MODULE_DESCRIPTION("sensor devinfo");
 MODULE_LICENSE("GPL");

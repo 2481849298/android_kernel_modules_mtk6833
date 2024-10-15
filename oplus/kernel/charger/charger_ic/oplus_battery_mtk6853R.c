@@ -39,8 +39,15 @@
 #include <linux/reboot.h>
 #include <linux/timer.h>
 
+#include <linux/version.h>
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 #include <mt-plat/charger_type.h>
 #include <mt-plat/mtk_battery.h>
+#else
+#include <mt-plat/v1/charger_type.h>
+#include <mt-plat/v1/mtk_battery.h>
+#endif
+
 #include <mt-plat/mtk_boot.h>
 #include <pmic.h>
 #include <mtk_gauge_time_service.h>
@@ -60,13 +67,14 @@
 #include "../oplus_adapter.h"
 #include "../oplus_short.h"
 #include "../oplus_configfs.h"
+#include "../oplus_chg_track.h"
 
 //#include "../gauge_ic/oplus_bq27541.h"
 #include "op_charge.h"
 #include "../../../misc/mediatek/typec/tcpc/inc/tcpci.h"
 #include "../../../misc/mediatek/pmic/mt6360/inc/mt6360_pmu.h"
 #include "oplus_bq25910.h"
-	
+
 #ifdef OPLUS_FEATURE_CHG_BASIC
 #include <linux/iio/consumer.h>
 #endif
@@ -194,7 +202,9 @@ static struct charger_manager *pinfo;
 static struct list_head consumer_head = LIST_HEAD_INIT(consumer_head);
 static DEFINE_MUTEX(consumer_mutex);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 #ifndef OPLUS_FEATURE_CHG_BASIC
+/* 2020/02/12, remove to mtk_pe40_intf.c, resolve compile error */
 bool mtk_is_TA_support_pd_pps(struct charger_manager *pinfo)
 {
 	if (pinfo->enable_pe_4 == false && pinfo->enable_pe_5 == false)
@@ -204,6 +214,20 @@ bool mtk_is_TA_support_pd_pps(struct charger_manager *pinfo)
 		return true;
 	return false;
 }
+#endif
+#else
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* 2020/02/12, remove to mtk_pe40_intf.c, resolve compile error */
+bool mtk_is_TA_support_pd_pps(struct charger_manager *pinfo)
+{
+	if (pinfo->enable_pe_4 == false && pinfo->enable_pe_5 == false)
+		return false;
+
+	if (pinfo->pd_type == MTK_PD_CONNECT_PE_READY_SNK_APDO)
+		return true;
+	return false;
+}
+#endif
 #endif
 
 bool is_power_path_supported(void)
@@ -339,8 +363,13 @@ void _wake_up_charger(struct charger_manager *info)
 		return;
 
 	spin_lock_irqsave(&info->slock, flags);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 	if (!info->charger_wakelock.active)
 		__pm_stay_awake(&info->charger_wakelock);
+#else
+	if (!info->charger_wakelock->active)
+		__pm_stay_awake(info->charger_wakelock);
+#endif
 	spin_unlock_irqrestore(&info->slock, flags);
 	info->charger_thread_timeout = true;
 	wake_up(&info->wait_que);
@@ -1335,6 +1364,7 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK;
 			mutex_unlock(&pinfo->charger_pd_lock);
 #ifdef OPLUS_FEATURE_CHG_BASIC
+			oplus_chg_track_record_chg_type_info();
 			pinfo->in_good_connect = true;
 			oplus_get_adapter_svid();
 			chr_err("MTK_PD_CONNECT_PE_READY_SNK_PD30 in_good_connect true\n");
@@ -1348,6 +1378,7 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			pinfo->pd_type = MTK_PD_CONNECT_PE_READY_SNK_PD30;
 			mutex_unlock(&pinfo->charger_pd_lock);
 #ifdef OPLUS_FEATURE_CHG_BASIC
+			oplus_chg_track_record_chg_type_info();
 			pinfo->in_good_connect = true;
 			oplus_get_adapter_svid();
 			chr_err("MTK_PD_CONNECT_PE_READY_SNK_PD30 in_good_connect true\n");
@@ -1363,6 +1394,7 @@ void notify_adapter_event(enum adapter_type type, enum adapter_event evt,
 			/* PE40 is ready */
 			_wake_up_charger(pinfo);
 #ifdef OPLUS_FEATURE_CHG_BASIC
+			oplus_chg_track_record_chg_type_info();
 			pinfo->in_good_connect = true;
 			oplus_get_adapter_svid();
 			chr_err("MTK_PD_CONNECT_PE_READY_SNK_PD30 in_good_connect true\n");
@@ -1432,13 +1464,21 @@ static void oplus_mt6360_dump_registers(void)
 			g_oplus_chip->unwakelock_chg == 1 &&
 			mt_get_charger_type() == NONSTANDARD_CHARGER) {
 		musb_hdrc_release = true;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 		mt_usb_disconnect();
+#else
+		mt_usb_disconnect_v1();
+#endif
 	} else {
 		if (musb_hdrc_release == true &&
 				g_oplus_chip->unwakelock_chg == 0 &&
 				mt_get_charger_type() == NONSTANDARD_CHARGER) {
 			musb_hdrc_release = false;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 			mt_usb_connect();
+#else
+			mt_usb_connect_v1();
+#endif
 		}
 	}
 
@@ -2369,7 +2409,9 @@ int mt_get_chargerid_volt(void)
 			return 0;
 		}
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 		chargerid_volt = chargerid_volt * 1500 / 4096;
+#endif
 		chg_debug("chargerid_volt=%d\n", chargerid_volt);
 	} else {
 		chg_debug("is_support_chargerid_check=false!\n");
@@ -2902,7 +2944,9 @@ static int oplus_get_temp_volt(struct ntc_temp *ntc_param)
 		ntc_temp_volt = ntc_param->i_25c_volt;
 	}
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 	ntc_temp_volt = ntc_temp_volt * 1500 / 4096;
+#endif
 	/* chg_err("ntc_temp_volt:%d\n", ntc_temp_volt); */
 
 	return ntc_temp_volt;
@@ -3216,7 +3260,7 @@ int oplus_get_otg_online_status(void)
 				__func__, level ? "H" : "L", typec_otg, online);
 	}
 
-	chip->otg_online = online;
+	chip->otg_online = typec_otg;
 	return online;
 }
 
@@ -3418,13 +3462,22 @@ void oplus_get_usbtemp_volt(struct oplus_chg_chip *chip)
 		chg_err("read usb_temp_v_l_chan volt failed, rc=%d\n", rc);
 	}
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 	chip->usbtemp_volt_l = usbtemp_volt * 1500 / 4096;
+#else
+	chip->usbtemp_volt_l = usbtemp_volt;
+#endif
 
 	rc = iio_read_channel_processed(pinfo->usb_temp_v_r_chan, &usbtemp_volt);
 	if (rc < 0) {
 		chg_err("read usb_temp_v_r_chan volt failed, rc=%d\n", rc);
 	}
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 	chip->usbtemp_volt_r = usbtemp_volt * 1500 / 4096;
+#else
+	chip->usbtemp_volt_r = usbtemp_volt;
+#endif
 
 	/* chg_err("usbtemp_volt: %d, %d\n", chip->usbtemp_volt_r, chip->usbtemp_volt_l); */
 
@@ -3736,9 +3789,6 @@ static int battery_get_property(struct power_supply *psy,
 			if (g_oplus_chip) {
 				val->intval = g_oplus_chip->batt_fcc * 1000;
 			}
-			break;
-		case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
-			val->intval = 0;
 			break;
 		default:
 			rc = oplus_battery_get_property(psy, psp, val);
@@ -4481,8 +4531,13 @@ struct oplus_chg_operations  mtk6360_chg_ops = {
 	.set_rtc_soc = set_rtc_spare_oplus_fg_value,
 	.set_power_off = oplus_mt_power_off,
 	.get_charger_subtype = oplus_chg_get_charger_subtype,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 	.usb_connect = mt_usb_connect,
 	.usb_disconnect = mt_usb_disconnect,
+#else
+	.usb_connect = mt_usb_connect_v1,
+	.usb_disconnect = mt_usb_disconnect_v1,
+#endif
 #else /* CONFIG_OPLUS_CHARGER_MTK */
 	.get_charger_type = qpnp_charger_type_get,
 	.get_charger_volt = qpnp_get_prop_charger_voltage_now,
@@ -4922,6 +4977,5 @@ static void __exit mtk_charger_exit(void)
 module_exit(mtk_charger_exit);
 
 
-MODULE_AUTHOR("LiYue<liyue1@oplus.com>");
 MODULE_DESCRIPTION("OPLUS Charger Driver");
 MODULE_LICENSE("GPL");

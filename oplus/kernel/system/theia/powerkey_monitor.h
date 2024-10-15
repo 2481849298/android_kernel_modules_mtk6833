@@ -42,7 +42,39 @@
 #include <linux/msm_drm_notify.h>
 #endif /*CONFIG_DRM_MSM*/
 
+#include <linux/module.h>
+#include <linux/fb.h>
+#include <linux/notifier.h>
+#include <linux/timer.h>
+#include <linux/kthread.h>
+#include <soc/oplus/system/oplus_bscheck.h>
 #include <soc/oplus/system/oplus_brightscreen_check.h>
+#include "../include/theia_send_event.h"
+
+#include <asm/uaccess.h>
+#include <linux/proc_fs.h>
+#include <linux/input.h>
+#include <linux/miscdevice.h>
+#ifdef CONFIG_ARM
+#include <linux/sched.h>
+#else
+#include <linux/wait.h>
+#endif
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/poll.h>
+#include <linux/string.h>
+#include <linux/delay.h>
+#include <linux/sched/debug.h>
+#include <linux/nmi.h>
+#include <soc/oplus/system/boot_mode.h>
+#if IS_MODULE(CONFIG_OPLUS_FEATURE_THEIA)
+#include <linux/sysrq.h>
+#endif
+
+#ifdef CONFIG_DRM_MSM
+#include <linux/msm_drm_notify.h>
+#endif
 
 #include <linux/sched/signal.h>
 #include <soc/oplus/system/oplus_signal.h>
@@ -59,17 +91,17 @@
 #define BRIGHT_STATUS_CHECK_DISABLE     5
 #define BRIGHT_STATUS_CHECK_DEBUG         6
 
-struct bright_data {
-	int is_panic;
-	int status;
-	int blank;
-	int get_log;
-	unsigned int timeout_ms;
-	unsigned int error_count;
-	struct notifier_block fb_notif;
-	struct timer_list timer;
-	struct work_struct error_happen_work;
-	char error_id[64]; /*format: systemserver_pid:time_sec:time_usec*/
+struct bright_data{
+    int is_panic;
+    int status;
+    int blank;
+    int get_log;
+    unsigned int timeout_ms;
+    unsigned int error_count;
+    struct notifier_block fb_notif;
+    struct timer_list timer;
+    struct work_struct error_happen_work;
+    char error_id[64]; /*format: systemserver_pid:time_sec:time_usec*/
 };
 
 #define BLACK_STATUS_INIT                 1
@@ -79,17 +111,17 @@ struct bright_data {
 #define BLACK_STATUS_CHECK_DISABLE         5
 #define BLACK_STATUS_CHECK_DEBUG         6
 
-struct black_data {
-	int is_panic;
-	int status;
-	int blank;
-	int get_log;
-	unsigned int timeout_ms;
-	unsigned int error_count;
-	struct notifier_block fb_notif;
-	struct timer_list timer;
-	struct work_struct error_happen_work;
-	char error_id[64]; /*format: systemserver_pid:time_sec:time_usec*/
+struct black_data{
+    int is_panic;
+    int status;
+    int blank;
+    int get_log;
+    unsigned int timeout_ms;
+    unsigned int error_count;
+    struct notifier_block fb_notif;
+    struct timer_list timer;
+    struct work_struct error_happen_work;
+    char error_id[64]; /*format: systemserver_pid:time_sec:time_usec*/
 };
 
 extern struct bright_data g_bright_data;
@@ -99,8 +131,8 @@ void bright_screen_check_init(void);
 void bright_screen_exit(void);
 void black_screen_check_init(void);
 void black_screen_exit(void);
-void theia_pwk_stage_start(char *reason);
-void theia_pwk_stage_end(char *reason);
+void theia_pwk_stage_start(char* reason);
+void theia_pwk_stage_end(char* reason);
 void send_black_screen_dcs_msg(void);
 void send_bright_screen_dcs_msg(void);
 /*bool is_powerkey_check_valid(void);*/

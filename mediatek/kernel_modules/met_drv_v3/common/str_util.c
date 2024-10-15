@@ -47,7 +47,11 @@ struct met_str_array * met_util_str_split(const char *input_str, int delim){
 		return NULL;
 	}
 
-	str_array_obj->str_ptr_array_length=0;
+	/*partial init str_array_obj due to kzalloc not work for coverity scan tool*/
+	str_array_obj->str_ptr_array_length = 0;
+	str_array_obj->str_ptr_array = NULL;
+	str_array_obj->target_str = NULL;
+
 
 	str_array_obj->target_str = kmalloc(str_length+1, GFP_KERNEL);
 	if(str_array_obj->target_str ==NULL){

@@ -2,11 +2,12 @@
 #include <linux/module.h>
 #include <linux/ioctl.h>
 #include <linux/fs.h>
-
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/errno.h>
-
+#include <linux/interrupt.h>
+#include <linux/irq.h>
+#include <linux/of_irq.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
 #include <linux/of.h>
@@ -18,13 +19,31 @@
 #include "fingerprint_log.h"
 #include "fingerprint_ree_dts.h"
 #include "fingerprint_ree_spi.h"
+#include <linux/gpio.h>
+#include <linux/regulator/consumer.h>
+#include <linux/of_gpio.h>
+#include <linux/timer.h>
+#include <linux/notifier.h>
+#include <linux/fb.h>
+#include <linux/pm_qos.h>
+#include <linux/cpufreq.h>
+#include <linux/time.h>
+#include <linux/types.h>
+#include <net/sock.h>
+#include <net/netlink.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/version.h>
 #include "../include/fingerprint_event.h"
+#include "../include/wakelock.h"
 
 #define FP_DEV_NAME "fingerprint_dev"
 struct fp_underscreen_info g_fp_touchinfo;
 static unsigned int        g_last_tp_state = 0;
 #define SPIDEV_MAJOR            153
 #define N_SPI_MINORS            32  /* ... up to 256 */
+#define WAKELOCK_HOLD_IRQ_TIME 500 /* in ms */
+
 static DECLARE_BITMAP(minors, N_SPI_MINORS);
 #define SPI_MODE_MASK (SPI_CPHA|SPI_CPOL|SPI_CS_HIGH|SPI_LSB_FIRST|SPI_3WIRE|SPI_LOOP|SPI_NO_CS|SPI_READY)
 
@@ -33,6 +52,7 @@ static DEFINE_MUTEX(device_list_lock);
 static unsigned bufsiz = 4096;
 module_param(bufsiz, uint, S_IRUGO);
 MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
+static struct wake_lock fp_wakelock;
 
 static void ree_spi_complete(void *arg)
 {
@@ -99,10 +119,15 @@ static inline ssize_t spi_sync_read_internal(struct spidev_data *spidev, char *t
         .tx_buf     = tx_buf,
         .rx_buf     = rx_buf,
         .len        = len,
-        .speed_hz = 54000000
+        .speed_hz = 2000000
     };
     struct spi_message  m;
-
+    struct spi_device   *spi;
+    spin_lock_irq(&spidev->spi_lock);
+    spi = spi_dev_get(spidev->spi);
+    spin_unlock_irq(&spidev->spi_lock);
+    t.speed_hz = spi->max_speed_hz;
+    FP_LOGI("speed_hz =%d", t.speed_hz);
     spi_message_init(&m);
     spi_message_add_tail(&t, &m);
     ret = ree_spi_sync(spidev, &m);
@@ -206,6 +231,67 @@ void fingerprint_setup_conf(struct spidev_data *dev, u32 speed)
     }
 }
 
+static void fp_enable_irq(struct spidev_data *fp_dev) {
+    if (fp_dev->irq_enabled) {
+        pr_warn("IRQ has been enabled.\n");
+    } else {
+        enable_irq(fp_dev->irq);
+        fp_dev->irq_enabled = 1;
+    }
+}
+
+static void fp_disable_irq(struct spidev_data *fp_dev) {
+    if (fp_dev->irq_enabled) {
+        fp_dev->irq_enabled = 0;
+        disable_irq(fp_dev->irq);
+    } else {
+        pr_warn("IRQ has been disabled.\n");
+    }
+}
+
+static int fp_read_irq_value(struct spidev_data *fp_dev) {
+    if (fp_dev->irq_gpio < 0) {
+        pr_warn("err, irq_gpio not init.\n");
+        return -1;
+    }
+
+    int irq_value = gpio_get_value(fp_dev->irq_gpio);
+    pr_info("%s, irq_value = %d\n", __func__, irq_value);
+    return irq_value;
+}
+
+static irqreturn_t fp_irq_handler(int irq, void *handle) {
+    char msg = NETLINK_EVENT_IRQ;
+    wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_IRQ_TIME));
+    send_fingerprint_msg(E_FP_SENSOR, msg, NULL, 0);
+    return IRQ_HANDLED;
+}
+
+static int irq_setup(struct spidev_data *fp_dev) {
+    int status;
+
+    fp_dev->irq = fp_irq_num(fp_dev);
+    status      = request_threaded_irq(
+        fp_dev->irq, NULL, fp_irq_handler, IRQF_TRIGGER_RISING | IRQF_ONESHOT, "oplusfp", fp_dev);
+
+    if (status) {
+        pr_err("failed to request IRQ:%d\n", fp_dev->irq);
+        return status;
+    }
+    enable_irq_wake(fp_dev->irq);
+    fp_dev->irq_enabled = 1;
+
+    return status;
+}
+
+static void irq_cleanup(struct spidev_data *fp_dev) {
+    fp_dev->irq_enabled = 0;
+    disable_irq(fp_dev->irq);
+    disable_irq_wake(fp_dev->irq);
+    free_irq(fp_dev->irq, fp_dev);  // need modify
+}
+
+
 int opticalfp_irq_handler(struct fp_underscreen_info *tp_info) {
     char msg     = 0;
     g_fp_touchinfo = *tp_info;
@@ -261,7 +347,7 @@ static long fingerprint_ioctl(struct file *filp, unsigned int cmd, unsigned long
         return -ESHUTDOWN;
     }
     mutex_lock(&spidev->buf_lock);
-
+    
     switch (cmd) {
     case FP_SPI_IOC_RD_MODE:
         retval = __put_user(spi->mode & SPI_MODE_MASK, (__u8 __user *)arg);
@@ -350,7 +436,21 @@ static long fingerprint_ioctl(struct file *filp, unsigned int cmd, unsigned long
         fingerprint_setup_conf(spidev, 8);
         break;
     case FP_IOC_RESET:
+        pr_info("%s FP_IOC_RESET\n", __func__);
         fp_hw_reset(spidev, 60);
+        break;
+    case FP_IOC_DISABLE_IRQ:
+        pr_info("%s FP_IOC_DISABLE_IRQ\n", __func__);
+        fp_disable_irq(spidev);
+        break;
+    case FP_IOC_ENABLE_IRQ:
+        pr_info("%s FP_IOC_ENABLE_IRQ\n", __func__);
+        fp_enable_irq(spidev);
+        break;
+    case FP_IOC_RD_IRQ_VALUE:
+        pr_info("%s FP_IOC_RD_IRQ_VALUE\n", __func__);
+        int irq_value = fp_read_irq_value(spidev);
+        retval = __put_user(irq_value, (int32_t __user *)arg);
         break;
     default:
         FP_LOGI("unkonw type\n");
@@ -378,9 +478,9 @@ static int fingerprint_open(struct inode *inode, struct file *filp)
         spidev->users++;
         filp->private_data = spidev;
         nonseekable_open(inode, filp);
+    } else {
+        FP_LOGD("No device for minor %d", iminor(inode));
     }
-    else
-        FP_LOGD("spidev: nothing for minor %d\n", iminor(inode));
     mutex_unlock(&device_list_lock);
     func_exit();
     return status;
@@ -466,7 +566,9 @@ static int fingerprint_driver_probe(struct spi_device *spi)
     } else {
         kfree(spidev);
     }
-    FP_LOGI("%s init success", __func__);
+
+    wake_lock_init(&fp_wakelock, WAKE_LOCK_SUSPEND, "fp_wakelock");
+    status = irq_setup(spidev);
 fp_out:
     FP_LOGI("%s init status:%d", __func__, status);
     return status;
@@ -487,6 +589,7 @@ static int spidev_remove(struct spi_device *spi)
         kfree(spidev);
     }
     mutex_unlock(&device_list_lock);
+    wake_lock_destroy(&fp_wakelock);
     return 0;
 }
 
@@ -516,7 +619,7 @@ static int fingerprint_driver_init(void)
     if (status < 0) {
         return status;
     }
-    fingerprint_class = class_create(THIS_MODULE, "spidev");
+    fingerprint_class = class_create(THIS_MODULE, "fpspidev");
     if (IS_ERR(fingerprint_class)) {
         unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
         return PTR_ERR(fingerprint_class);
@@ -526,6 +629,7 @@ static int fingerprint_driver_init(void)
         class_destroy(fingerprint_class);
         unregister_chrdev(SPIDEV_MAJOR, spidev_spi_driver.driver.name);
     }
+    FP_LOGI("%s, exit\n", __func__);
     return status;
 }
 module_init(fingerprint_driver_init);

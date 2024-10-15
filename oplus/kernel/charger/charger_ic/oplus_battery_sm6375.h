@@ -17,8 +17,24 @@
 #include <linux/extcon-provider.h>
 #include <linux/usb/typec.h>
 #include <linux/qti_power_supply.h>
+#include <linux/version.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+#include "../../../supply/qcom/storm-watch.h"
+#include "../../../supply/qcom/battery.h"
+#include "../../../usb/typec/tcpc/inc/tcpci.h"
+#include "../../../usb/typec/tcpc/inc/tcpm.h"
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#include "../../../../../kernel_platform/msm-kernel/drivers/power/supply/qcom/storm-watch.h"
+#include "../../../../../kernel_platform/msm-kernel/drivers/power/supply/qcom/battery.h"
+#include "../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpci.h"
+#include "../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpm.h"
+#include "../../../../../kernel_platform/msm-kernel/drivers/usb/typec/pd/inc/tcpm_pd.h"
+#else
 #include "../../../../kernel/msm-5.4/drivers/power/supply/qcom/storm-watch.h"
 #include "../../../../kernel/msm-5.4/drivers/power/supply/qcom/battery.h"
+#include "../../../../kernel/msm-5.4/drivers/usb/typec/tcpc/inc/tcpci.h"
+#include "../../../../kernel/msm-5.4/drivers/usb/typec/tcpc/inc/tcpm.h"
+#endif
 #include <linux/iio/iio.h>
 #include <dt-bindings/iio/qti_power_supply_iio.h>
 #include <linux/nvmem-consumer.h>
@@ -170,6 +186,13 @@ enum jeita_cfg_stat {
 enum {
 	RERUN_AICL = 0,
 	RESTART_AICL,
+};
+
+enum cc_modes_type {
+	MODE_DEFAULT = 0,
+	MODE_UFP,
+	MODE_DFP,
+	MODE_DRP
 };
 
 enum smb_irq_index {
@@ -405,6 +428,8 @@ struct smb_iio {
 	struct iio_channel	*parallel_isense_chan;
 	struct iio_channel	*batbtb_temp_chan;
 	struct iio_channel	*usbbtb_temp_chan;
+	struct iio_channel	*subboard_temp_chan;
+	int			pre_batt_temp;
 #endif
 };
 
@@ -677,6 +702,7 @@ struct smb_charger {
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	int			pre_current_ma;
 	bool			is_dpdm_on_usb;
+	bool 			pd_not_rise_vbus_only_5v;
 	struct delayed_work	divider_set_work;
 	struct work_struct	dpdm_set_work;
 	struct work_struct	chargerid_switch_work;
@@ -700,9 +726,17 @@ struct smb_charger {
 	struct pinctrl_state	*shipmode_id_active;
 	bool			pd_sdp;
 	struct tcpc_device	*tcpc;
+
+	bool sy6974b_shipmode_enable;
+	bool external_cclogic;
 	bool			first_hardreset;
 	bool			keep_vbus_5v;
 	struct nvmem_cell	*soc_backup_nvmem;
+
+	int pps_min_mv[PDO_MAX_NR];
+	int pps_max_mv[PDO_MAX_NR];
+	int pps_ma[PDO_MAX_NR];
+	int pps_nr;
 #endif
 };
 
@@ -1109,5 +1143,7 @@ int smblib_get_prop_dc_voltage_now(struct smb_charger *chg,
 				union power_supply_propval *val);
 
 void smblib_moisture_detection_enable(struct smb_charger *chg, int pval);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+void oplus_chg_pps_get_source_cap(void);
+#endif
 #endif /* __OPLUS_BATTERY_SM6375_H */

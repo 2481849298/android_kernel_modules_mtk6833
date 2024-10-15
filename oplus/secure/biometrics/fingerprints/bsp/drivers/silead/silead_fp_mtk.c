@@ -289,7 +289,6 @@ static int silfp_parse_dts(struct silfp_data* fp_dev)
     struct device_node *node = NULL;
     struct platform_device *pdev = NULL;
     int  ret;
-//#ifdef VENDOR_EDIT
     node = of_find_compatible_node(NULL, NULL, FP_PINS_OF);
 
     if (node) {
@@ -332,7 +331,6 @@ static int silfp_parse_dts(struct silfp_data* fp_dev)
         LOG_MSG_DEBUG(ERR_LOG, "%s can't find silfp pinctrl\n", __func__);
         return ret;
     }
-//#endif VENDOR_EDIT
     fp_dev->pin.pins_irq = pinctrl_lookup_state(fp_dev->pin.pinctrl, "irq-init");
     if (IS_ERR(fp_dev->pin.pins_irq)) {
         ret = PTR_ERR(fp_dev->pin.pins_irq);
@@ -428,7 +426,7 @@ static int silfp_parse_dts(struct silfp_data* fp_dev)
 /* -------------------------------------------------------------------- */
 static int silfp_set_spi_default_status (struct silfp_data *fp_dev)
 {
-    int ret;
+    int ret = 0;
 #ifdef BSP_SIL_CTRL_SPI
 	fp_dev->pin.spi_default = pinctrl_lookup_state(fp_dev->pin.pinctrl, "spi-default");
 	if (IS_ERR(fp_dev->pin.spi_default)) {
@@ -465,16 +463,23 @@ static int silfp_set_spi(struct silfp_data *fp_dev, bool enable)
         return ret;
     }
 
-    if ( enable && !atomic_read(&fp_dev->spionoff_count) ) {
-        atomic_inc(&fp_dev->spionoff_count);
+    if (enable) {
+        if (!atomic_read(&fp_dev->spionoff_count)) {
         mt_spi_enable_master_clk(fp_dev->spi);
         /*	clk_prepare_enable(ms->clk_main); */
         //ret = clk_enable(ms->clk_main);
+        }
+        atomic_inc(&fp_dev->spionoff_count);
     } else if (atomic_read(&fp_dev->spionoff_count)) {
         atomic_dec(&fp_dev->spionoff_count);
+        if (!atomic_read(&fp_dev->spionoff_count)) {
         mt_spi_disable_master_clk(fp_dev->spi);
         /*	clk_disable_unprepare(ms->clk_main); */
         //clk_disable(ms->clk_main);
+        }
+        ret = 0;
+    } else {
+        LOG_MSG_DEBUG(ERR_LOG, "unpaired enable/disable %d, [%s]\n",enable,__func__);
         ret = 0;
     }
     LOG_MSG_DEBUG(DBG_LOG, "[%s] done (%d).\n",__func__,ret);

@@ -30,7 +30,11 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/delay.h>
-#include <linux/pm_wakeup.h>
+#include "../include/wakelock.h"
+#include <linux/spi/spi.h>
+#include <linux/miscdevice.h>
+#include <linux/ioctl.h>
+#include <linux/of.h>
 
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
@@ -51,18 +55,26 @@
 #define FF_WAKELOCK_TIMEOUT            2000
 
 /*power voltage range*/
-#define FF_VTG_MIN_UV               2800000
+#define FF_VTG_MIN_UV               3300000
 #define FF_VTG_MAX_UV               3300000
 
 /* Logging driver to logcat through uevent mechanism.    */
 #undef LOG_TAG
 #define LOG_TAG                "focaltech"
 
+#define FF_SPI_DRIVER_NAME          "focaltech_fpspi"
 
 /*****************************************************************************
 * Static variable or functions
 *****************************************************************************/
+/*
+ * __FF_EARLY_LOG_LEVEL can be defined as compilation option.
+ * default level is FF_LOG_LEVEL_ALL(all the logs will be output).
+ */
 
+#ifndef __FF_EARLY_LOG_LEVEL
+#define __FF_EARLY_LOG_LEVEL FF_LOG_LEVEL_DBG
+#endif
 
 /*****************************************************************************
 * Global variable or extern global variabls/functions
@@ -72,10 +84,55 @@ ff_context_t *g_ff_ctx;
 ff_log_level_t g_ff_log_level = (ff_log_level_t)(__FF_EARLY_LOG_LEVEL);
 
 
-/*#ifdef CONFIG_FINGERPRINT_FOCALTECH_SPI_SUPPORT    */
-extern void mt_spi_enable_master_clk(struct spi_device *spidev);
-extern void mt_spi_disable_master_clk(struct spi_device *spidev);
-/*#endif    */
+/*
+ * Using the following five macros for conveniently logging.
+ */
+#define FF_LOGV(...)                                               \
+    do {                                                           \
+        if (g_ff_log_level <= FF_LOG_LEVEL_VBS) {                  \
+            ff_log_printf(FF_LOG_LEVEL_VBS, LOG_TAG, __VA_ARGS__); \
+        }                                                          \
+    } while (0)
+
+#define FF_LOGD(...)                                               \
+    do {                                                           \
+        if (g_ff_log_level <= FF_LOG_LEVEL_DBG) {                  \
+            ff_log_printf(FF_LOG_LEVEL_DBG, LOG_TAG, __VA_ARGS__); \
+        }                                                          \
+    } while (0)
+
+#define FF_LOGI(...)                                               \
+    do {                                                           \
+        if (g_ff_log_level <= FF_LOG_LEVEL_INF) {                  \
+            ff_log_printf(FF_LOG_LEVEL_INF, LOG_TAG, __VA_ARGS__); \
+        }                                                          \
+    } while (0)
+
+#define FF_LOGW(...)                                               \
+    do {                                                           \
+        if (g_ff_log_level <= FF_LOG_LEVEL_WRN) {                  \
+            ff_log_printf(FF_LOG_LEVEL_WRN, LOG_TAG, __VA_ARGS__); \
+        }                                                          \
+    } while (0)
+
+#define FF_LOGE(format, ...)                                       \
+    do {                                                           \
+        if (g_ff_log_level <= FF_LOG_LEVEL_ERR) {                  \
+            const char *__fname__ = __FILE__, *s = __fname__;      \
+            do {                                                   \
+                if (*s == '/') {                                   \
+                    __fname__ = s + 1;                           \
+                }                                                \
+            } while (*s++);                                        \
+            ff_log_printf(FF_LOG_LEVEL_ERR, LOG_TAG,               \
+                    "error at %s[%s:%d]: " format, __FUNCTION__,   \
+                    __fname__, __LINE__, ##__VA_ARGS__);           \
+        }                                                          \
+    } while (0)
+// #ifdef CONFIG_FINGERPRINT_FOCALTECH_SPI_SUPPORT
+// extern void mt_spi_enable_master_clk(struct spi_device *spidev);
+// extern void mt_spi_disable_master_clk(struct spi_device *spidev);
+// #endif
 
 /*****************************************************************************
 * Static function prototypes
@@ -94,7 +151,7 @@ __attribute__((weak)) void mt_spi_disable_master_clk(struct spi_device *spidev)
 {
     FF_LOGD("disable spi clock-weak");
 }
-/*#endif    */
+// #endif
 
 
 int ff_log_printf(ff_log_level_t level, const char *tag, const char *fmt, ...)
@@ -107,7 +164,8 @@ int ff_log_printf(ff_log_level_t level, const char *tag, const char *fmt, ...)
     ff_context_t *ff_ctx = g_ff_ctx;
 
     /* Fill logging level. */
-    available -= sprintf(uevent_env_buf, "FF_LOG=%1d", level);
+    int32_t log_level = level;
+    available -= sprintf(uevent_env_buf, "FF_LOG=%1d", log_level);
     ptr += strlen(uevent_env_buf);
 
     /* Fill logging message. */
@@ -124,29 +182,391 @@ int ff_log_printf(ff_log_level_t level, const char *tag, const char *fmt, ...)
 
     /* Native output. */
     switch (level) {
-    case FF_LOG_LEVEL_ERR:
-        n = printk(KERN_ERR "[E]focaltech: %s\n", ptr);
-        break;
-    case FF_LOG_LEVEL_WRN:
-        n = printk(KERN_WARNING "[W]focaltech: %s\n", ptr);
-        break;
-    case FF_LOG_LEVEL_INF:
-        n = printk(KERN_INFO "[I]focaltech: %s\n", ptr);
-        break;
-    case FF_LOG_LEVEL_DBG:
-    case FF_LOG_LEVEL_VBS:
-    default:
-        n = printk(KERN_DEBUG "focaltech: %s\n", ptr);
-        break;
+        case FF_LOG_LEVEL_ERR:
+            n = printk(KERN_ERR "[E]focaltech: %s\n", ptr);
+            break;
+        case FF_LOG_LEVEL_WRN:
+            n = printk(KERN_WARNING "[W]focaltech: %s\n", ptr);
+            break;
+        case FF_LOG_LEVEL_INF:
+            n = printk(KERN_INFO "[I]focaltech: %s\n", ptr);
+            break;
+        case FF_LOG_LEVEL_DBG:
+        case FF_LOG_LEVEL_VBS:
+        default:
+            n = printk(KERN_DEBUG "focaltech: %s\n", ptr);
+            break;
     }
     return n;
 }
+/*****************************************************************************
+* static variable or structure
+*****************************************************************************/
+struct ff_spi_context {
+    struct spi_device *spi;
+    struct miscdevice mdev;
+    struct mutex bus_lock;
+    u8 *bus_tx_buf;
+    u8 *bus_rx_buf;
+    bool b_misc;
+};
 
+struct ff_spi_sync_data {
+    char *tx;
+    char *rx;
+    unsigned int size;
+};
+
+struct ff_spi_sync_data_2 {
+    char *tx;
+    char *rx;
+    unsigned int tx_len;
+    unsigned int rx_len;
+};
+
+#define FF_IOCTL_SPI_DEVICE         0xC6
+#define FF_IOCTL_SPI_SYNC           _IOWR(FF_IOCTL_SPI_DEVICE, 0x01, struct ff_spi_sync_data)
+#define FF_IOCTL_GET_SPI_MODE       _IOR(FF_IOCTL_SPI_DEVICE, 0x02, u32)
+#define FF_IOCTL_SET_SPI_MODE       _IOW(FF_IOCTL_SPI_DEVICE, 0x02, u32)
+#define FF_IOCTL_GET_SPI_SPEED      _IOR(FF_IOCTL_SPI_DEVICE, 0x03, u32)
+#define FF_IOCTL_SET_SPI_SPEED      _IOW(FF_IOCTL_SPI_DEVICE, 0x03, u32)
+#define FF_IOCTL_SPI_SYNC_2         _IOWR(FF_IOCTL_SPI_DEVICE, 0x10, struct ff_spi_sync_data_2)
+
+
+/*****************************************************************************
+* Global variable or extern global variabls/functions
+*****************************************************************************/
+
+/* spi interface */
+static int ff_spi_sync(struct ff_spi_context *spi_ctx, u8 *tx_buf, u8 *rx_buf, u32 len)
+{
+    int ret = 0;
+    struct spi_message msg;
+    struct spi_transfer xfer = {
+        .tx_buf = tx_buf,
+        .rx_buf = rx_buf,
+        .len    = len,
+    };
+
+    if (!spi_ctx) {
+        FF_LOGE("spi_ctx is null");
+        return -ENODATA;
+    }
+
+    mutex_lock(&spi_ctx->bus_lock);
+    spi_message_init(&msg);
+    spi_message_add_tail(&xfer, &msg);
+
+    ret = spi_sync(spi_ctx->spi, &msg);
+    if (ret) {
+        FF_LOGE("spi_sync fail,ret:%d", ret);
+    }
+
+    mutex_unlock(&spi_ctx->bus_lock);
+    return ret;
+}
+
+static int ff_ioctl_set_spi_mode(struct ff_spi_context *spi_ctx, unsigned long arg)
+{
+    int ret = 0;
+    u32 mode = 0;
+
+    FF_LOGD("'%s' enter.", __func__);
+    ret = __get_user(mode, (__u32 __user *)arg);
+    FF_LOGD("set spi mode:%d", mode);
+    if ((ret == 0) && (spi_ctx->spi->mode != mode)) {
+        spi_ctx->spi->mode = mode;
+        ret = spi_setup(spi_ctx->spi);
+        if (ret < 0) {
+            FF_LOGE("spi setup fail, ret:%d", ret);
+        } else {
+            FF_LOGI("set spi mode:0x%x", (int)spi_ctx->spi->mode);
+        }
+    }
+    FF_LOGD("'%s' leave.", __func__);
+    return ret;
+}
+
+static int ff_ioctl_set_spi_speed(struct ff_spi_context *spi_ctx, unsigned long arg)
+{
+    int ret = 0;
+    u32 speed = 0;
+
+    FF_LOGD("'%s' enter.", __func__);
+    ret = __get_user(speed, (__u32 __user *)arg);
+    FF_LOGD("set spi speed:%d", speed);
+    if ((ret == 0) && (spi_ctx->spi->max_speed_hz != speed)) {
+        spi_ctx->spi->max_speed_hz = speed;
+        ret = spi_setup(spi_ctx->spi);
+        if (ret < 0) {
+            FF_LOGE("spi setup fail, ret:%d", ret);
+        } else {
+            FF_LOGI("set spi speed:%d", spi_ctx->spi->max_speed_hz);
+        }
+    }
+    FF_LOGD("'%s' leave.", __func__);
+    return ret;
+}
+
+static int ff_spi_open(struct inode *inode, struct file *filp)
+{
+    struct ff_spi_context *spi_ctx = container_of(filp->private_data, struct ff_spi_context, mdev);
+
+    FF_LOGD("'%s' enter.", __func__);
+    if (!spi_ctx) {
+        FF_LOGE("spi_ctx is null");
+        return -ENODATA;
+    }
+
+    if (!spi_ctx->bus_tx_buf) {
+        spi_ctx->bus_tx_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+        if (NULL == spi_ctx->bus_tx_buf) {
+            FF_LOGE("failed to allocate memory for bus_tx_buf");
+            return -ENOMEM;
+        }
+    }
+
+    if (!spi_ctx->bus_rx_buf) {
+        spi_ctx->bus_rx_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+        if (NULL == spi_ctx->bus_rx_buf) {
+            FF_LOGE("failed to allocate memory for bus_rx_buf");
+            kfree(spi_ctx->bus_tx_buf);
+            spi_ctx->bus_tx_buf = NULL;
+            return -ENOMEM;
+        }
+    }
+
+    FF_LOGD("'%s' leave.", __func__);
+    return 0;
+}
+
+static int ff_spi_close(struct inode *inode, struct file *filp)
+{
+    struct ff_spi_context *spi_ctx = container_of(filp->private_data, struct ff_spi_context, mdev);
+
+    FF_LOGD("'%s' enter.", __func__);
+    if (!spi_ctx) {
+        FF_LOGE("spi_ctx is null");
+        return -ENODATA;
+    }
+    if (spi_ctx->bus_tx_buf) {
+        kfree(spi_ctx->bus_tx_buf);
+        spi_ctx->bus_tx_buf = NULL;
+    }
+
+    if (spi_ctx->bus_rx_buf) {
+        kfree(spi_ctx->bus_rx_buf);
+        spi_ctx->bus_rx_buf = NULL;
+    }
+
+    FF_LOGD("'%s' leave.", __func__);
+    return 0;
+}
+
+static long ff_spi_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int ret = 0;
+    struct ff_spi_context *spi_ctx = container_of(filp->private_data, struct ff_spi_context, mdev);
+
+    FF_LOGV("'%s' enter.", __func__);
+    if (!spi_ctx) {
+        FF_LOGE("spi_ctx is null");
+        return -ENODATA;
+    }
+
+    switch (cmd) {
+        case FF_IOCTL_SPI_SYNC:
+            FF_LOGI("FF_IOCTL_SPI_SYNC ioctl cmd");
+            break;
+        case FF_IOCTL_GET_SPI_MODE:
+            ret = __put_user(spi_ctx->spi->mode, (__u32 __user *)arg);
+            break;
+        case FF_IOCTL_GET_SPI_SPEED:
+            ret = __put_user(spi_ctx->spi->max_speed_hz, (__u32 __user *)arg);
+            break;
+        case FF_IOCTL_SET_SPI_MODE:
+            ret = ff_ioctl_set_spi_mode(spi_ctx, arg);
+            break;
+        case FF_IOCTL_SET_SPI_SPEED:
+            ret = ff_ioctl_set_spi_speed(spi_ctx, arg);
+            break;
+        case FF_IOCTL_SPI_SYNC_2:
+            FF_LOGI("FF_IOCTL_SPI_SYNC_2 ioctl cmd");
+            break;
+        default:
+            FF_LOGI("unkown ioctl cmd(0x%x)", (int)cmd);
+            break;
+    }
+
+    FF_LOGV("'%s' leave.", __func__);
+    return ret;
+}
+
+static struct file_operations ff_spi_fops = {
+    .open = ff_spi_open,
+    .release = ff_spi_close,
+    .unlocked_ioctl = ff_spi_ioctl,
+};
+
+#ifdef FF_SPI_PINCTRL
+static void ff_spi_set_active(struct device *dev)
+{
+    int ret = 0;
+    struct pinctrl *pinctrl;
+    struct pinctrl_state *pins_spi_active;
+    FF_LOGV("'%s' enter.", __func__);
+    FF_LOGI("set spi pinctrl");
+    pinctrl = devm_pinctrl_get(dev);
+    if (IS_ERR(pinctrl)) {
+        ret = PTR_ERR(pinctrl);
+        FF_LOGD("no SPI pinctrl,ret=%d", ret);
+        return;
+    }
+
+    pins_spi_active = pinctrl_lookup_state(pinctrl, "ffspi_pins_active");
+    if (IS_ERR(pins_spi_active)) {
+        ret = PTR_ERR(pins_spi_active);
+        FF_LOGE("Cannot find pinctrl ffspi_active,ret=%d", ret);
+        return;
+    }
+
+    pinctrl_select_state(pinctrl, pins_spi_active);
+    FF_LOGV("'%s' leave.", __func__);
+}
+#endif
+
+static int ff_spi_probe(struct spi_device *spi)
+{
+    int ret = 0;
+    struct ff_spi_context *spi_ctx = NULL;
+    ff_context_t *ff_ctx = g_ff_ctx;
+
+    FF_LOGI("'%s' enter.", __func__);
+    ff_ctx->spi = spi;
+    ff_ctx->b_spiclk_enabled = 0;
+
+#ifdef FF_SPI_PINCTRL
+    /*set SPI pinctrl*/
+    ff_spi_set_active(&spi->dev);
+#endif
+
+    if (ff_ctx->b_read_chipid || ff_ctx->b_ree) {
+        FF_LOGI("need configure spi for communication");
+        /*spi_setup*/
+        spi->mode = SPI_MODE_0;
+        spi->bits_per_word = 8;
+        spi->max_speed_hz = 5000000;
+        ret = spi_setup(spi);
+        if (ret < 0) {
+            FF_LOGE("spi setup fail");
+            return ret;
+        }
+
+        /* malloc memory for global struct variable */
+        spi_ctx = (struct ff_spi_context *)kzalloc(sizeof(*spi_ctx), GFP_KERNEL);
+        if (!spi_ctx) {
+            FF_LOGE("allocate memory for ff_spi_context fail");
+            return -ENOMEM;
+        }
+
+        /*init*/
+        spi_ctx->spi = spi;
+        spi_set_drvdata(spi, spi_ctx);
+        mutex_init(&spi_ctx->bus_lock);
+
+        if (ff_ctx->b_ree) {
+            FF_LOGI("need add spi ioctrl for ree");
+            /*register misc_device*/
+            spi_ctx->mdev.minor = MISC_DYNAMIC_MINOR;
+            spi_ctx->mdev.name = FF_SPI_DRIVER_NAME;
+            spi_ctx->mdev.fops = &ff_spi_fops;
+            ret = misc_register(&spi_ctx->mdev);
+            if (ret < 0) {
+                FF_LOGE("misc_register(%s) fail", FF_SPI_DRIVER_NAME);
+                kfree(spi_ctx);
+                spi_ctx = NULL;
+                spi_set_drvdata(spi, NULL);
+                return ret;
+            }
+            spi_ctx->b_misc = true;
+        }
+    }
+
+    FF_LOGI("'%s' leave.", __func__);
+    return 0;
+}
+
+static int ff_spi_remove(struct spi_device *spi)
+{
+    struct ff_spi_context *spi_ctx = spi_get_drvdata(spi);
+
+    FF_LOGI("'%s' enter.", __func__);
+    if (spi_ctx) {
+        if (spi_ctx->b_misc) {
+            misc_deregister(&spi_ctx->mdev);
+        }
+        mutex_destroy(&spi_ctx->bus_lock);
+        if (spi_ctx->bus_tx_buf) {
+            kfree(spi_ctx->bus_tx_buf);
+        }
+        if (spi_ctx->bus_rx_buf) {
+            kfree(spi_ctx->bus_rx_buf);
+        }
+        kfree(spi_ctx);
+        spi_ctx = NULL;
+    }
+
+    spi_set_drvdata(spi, NULL);
+    FF_LOGI("'%s' leave.", __func__);
+    return 0;
+}
+
+static const struct of_device_id ff_spi_dt_match[] = {
+    {.compatible = "mediatek,fingerspi-fp", },
+    {.compatible = "oplus,oplus_fp", },
+    {.compatible = "focaltech,fpspi", },
+    {},
+};
+MODULE_DEVICE_TABLE(of, ff_spi_dt_match);
+
+static struct spi_driver ff_spi_driver = {
+    .driver = {
+        .name = FF_SPI_DRIVER_NAME,
+        .owner = THIS_MODULE,
+        .of_match_table = of_match_ptr(ff_spi_dt_match),
+    },
+    .probe = ff_spi_probe,
+    .remove = ff_spi_remove,
+};
+
+int ff_spi_init(void)
+{
+    int ret = 0;
+    FF_LOGI("'%s' enter.", __func__);
+
+    ret = spi_register_driver(&ff_spi_driver);
+    if (ret != 0) {
+        FF_LOGE("ff spi driver init failed!");
+    }
+    FF_LOGI("'%s' leave.", __func__);
+    return ret;
+}
+
+void ff_spi_exit(void)
+{
+    FF_LOGI("'%s' enter.", __func__);
+    spi_unregister_driver(&ff_spi_driver);
+    FF_LOGI("'%s' leave.", __func__);
+}
 /*disable/enable irq*/
 static int ff_set_irq(ff_context_t *ff_ctx, bool enable)
 {
     FF_LOGV("'%s' enter.", __func__);
-    if (!ff_ctx || (ff_ctx->irq_num <= 0) || (!ff_ctx->b_driver_inited)) {
+    if (!ff_ctx) {
+        FF_LOGE("ff_ctx is null");
+        return -EINVAL;
+    }
+    if ((ff_ctx->irq_num <= 0) || (!ff_ctx->b_driver_inited)) {
         FF_LOGE("ff_ctx/irq_num(%d)/b_driver_inited is invalid", ff_ctx->irq_num);
         return -EINVAL;
     }
@@ -179,9 +599,11 @@ static int ff_set_reset(ff_context_t *ff_ctx, bool high)
     if (ff_ctx->b_use_pinctrl && ff_ctx->pinctrl) {
         FF_LOGI("use pinctrl to control reset pin");
         if (high && ff_ctx->pins_reset_high) {
-            ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_reset_high); }
+            ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_reset_high);
+            }
         else if (!high && ff_ctx->pins_reset_low) {
-            ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_reset_low); }
+            ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_reset_low);
+            }
     }
 
     if (!ff_ctx->b_use_pinctrl && gpio_is_valid(ff_ctx->reset_gpio)) {
@@ -216,18 +638,22 @@ static int ff_power_on(ff_context_t *ff_ctx, bool on)
         if (ff_ctx->b_use_regulator && ff_ctx->ff_vdd) {
             FF_LOGI("use regulator to control power");
             if (on) {
-                ret = regulator_enable(ff_ctx->ff_vdd); }
+                ret = regulator_enable(ff_ctx->ff_vdd);
+                }
             else {
-                ret = regulator_disable(ff_ctx->ff_vdd); }
+                ret = regulator_disable(ff_ctx->ff_vdd);
+                }
         }
 
         if (!ff_ctx->b_use_regulator) {
             if (ff_ctx->b_use_pinctrl && ff_ctx->pinctrl) {
                 FF_LOGI("use pinctrl to control power pin");
                 if (on && ff_ctx->pins_power_high) {
-                    ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_power_high); }
+                    ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_power_high);
+                    }
                 else if (!on && ff_ctx->pins_power_low) {
-                    ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_power_low); }
+                    ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_power_low);
+                    }
             }
 
             if (!ff_ctx->b_use_pinctrl && gpio_is_valid(ff_ctx->vdd_gpio)) {
@@ -237,26 +663,49 @@ static int ff_power_on(ff_context_t *ff_ctx, bool on)
         }
 
         if (ret < 0) {
-            FF_LOGE("set power to %d failed,ret=%d", on, ret); }
+            FF_LOGE("set power to %d failed,ret=%d", on, ret);
+            }
         else {
-            ff_ctx->b_power_on = on; }
+            ff_ctx->b_power_on = on;
+            }
     }
 
     FF_LOGD("'%s' leave.", __func__);
     return ret;
 }
 
+static void ff_spi_mode_enable(ff_context_t *ff_ctx, u8 bonoff)
+{
+    if (!ff_ctx->pinctrl) {
+        FF_LOGE("ff_spi_mode_enable Cannot find pinctrl");
+        return;
+    }
+    if (bonoff == 0) {
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_cs_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_clk_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_mosi_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_miso_low);
+    } else if (bonoff == 1) {
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_cs_mode);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_clk);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_mosi);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_miso);
+    }
+}
+
 static int ff_set_spiclk(ff_context_t *ff_ctx, bool enable)
 {
     FF_LOGD("'%s' enter.", __func__);
 /*#ifdef CONFIG_FINGERPRINT_FOCALTECH_SPI_SUPPORT    */
-    if (ff_ctx && ff_ctx->b_spiclk && ff_ctx->spi) {
+    if (ff_ctx && ff_ctx->b_spiclk && ff_ctx->spi && ff_ctx->b_power_on) {
         FF_LOGD("set spi clock:%d->%d", ff_ctx->b_spiclk_enabled, enable);
         if (!ff_ctx->b_spiclk_enabled && enable) {
+            ff_spi_mode_enable(ff_ctx, 1);
             mt_spi_enable_master_clk(ff_ctx->spi);
             ff_ctx->b_spiclk_enabled = true;
         } else if (ff_ctx->b_spiclk_enabled && !enable) {
             mt_spi_disable_master_clk(ff_ctx->spi);
+            ff_spi_mode_enable(ff_ctx, 0);
             ff_ctx->b_spiclk_enabled = false;
         } else {
             FF_LOGD("can't set spi clock , becasue : ff_ctx->b_spiclk is %d , enable is %d ", ff_ctx->b_spiclk, enable);
@@ -272,7 +721,8 @@ static int ff_set_spiclk(ff_context_t *ff_ctx, bool enable)
 
 static int ff_register_input(ff_context_t *ff_ctx)
 {
-    int ret , i_try = 0;
+    int ret = 0;
+    int i_try = 0;
     ff_driver_config_t *config = &ff_ctx->ff_config;
     struct input_dev *input;
 
@@ -344,22 +794,10 @@ static int ff_ctl_init_driver(ff_context_t *ff_ctx)
         }
     }
 
-    /* Enable SPI clock. */
-    ret = ff_set_spiclk(ff_ctx, 1);
-    if (ret < 0) {
-        FF_LOGE("enable spi clock fails");
-        goto err_enable_spiclk;
-    }
-
     ff_ctx->b_driver_inited = true;
     FF_LOGD("'%s' leave.", __func__);
     return 0;
 
-err_enable_spiclk:
-    if (ff_ctx->b_gesture_support) {
-        input_unregister_device(ff_ctx->input);
-        ff_ctx->input = NULL;
-    }
 err_register_input:
     if (ff_ctx->irq_num > 0) {
         disable_irq_wake(ff_ctx->irq_num);
@@ -369,10 +807,12 @@ err_register_input:
 err_request_irq:
     if (!ff_ctx->b_power_always_on) {
         if (ff_ctx->b_use_regulator && ff_ctx->ff_vdd) {
-            regulator_put(ff_ctx->ff_vdd); }
+            regulator_put(ff_ctx->ff_vdd);
+            }
         if (!ff_ctx->b_use_regulator && !ff_ctx->b_use_pinctrl) {
             if (gpio_is_valid(ff_ctx->vdd_gpio)) {
-                gpio_free(ff_ctx->vdd_gpio); }
+                gpio_free(ff_ctx->vdd_gpio);
+                }
         }
     }
 err_init_power:
@@ -385,9 +825,11 @@ err_init_power:
         ff_ctx->pins_power_high = NULL;
     } else if (!ff_ctx->b_use_pinctrl) {
         if (gpio_is_valid(ff_ctx->irq_gpio)) {
-            gpio_free(ff_ctx->irq_gpio); }
+            gpio_free(ff_ctx->irq_gpio);
+            }
         if (gpio_is_valid(ff_ctx->reset_gpio)) {
-            gpio_free(ff_ctx->reset_gpio); }
+            gpio_free(ff_ctx->reset_gpio);
+            }
     }
 
     FF_LOGD("'%s' leave.", __func__);
@@ -432,10 +874,12 @@ static int ff_ctl_free_driver(ff_context_t *ff_ctx)
         }
 
         if (ff_ctx->b_use_regulator && ff_ctx->ff_vdd) {
-            regulator_put(ff_ctx->ff_vdd); }
+            regulator_put(ff_ctx->ff_vdd);
+            }
         if (!ff_ctx->b_use_regulator && !ff_ctx->b_use_pinctrl) {
             if (gpio_is_valid(ff_ctx->vdd_gpio)) {
-                gpio_free(ff_ctx->vdd_gpio); }
+                gpio_free(ff_ctx->vdd_gpio);
+                }
         }
     }
 
@@ -449,9 +893,11 @@ static int ff_ctl_free_driver(ff_context_t *ff_ctx)
         ff_ctx->pins_power_high = NULL;
     } else if (!ff_ctx->b_use_pinctrl) {
         if (gpio_is_valid(ff_ctx->irq_gpio)) {
-            gpio_free(ff_ctx->irq_gpio); }
+            gpio_free(ff_ctx->irq_gpio);
+            }
         if (gpio_is_valid(ff_ctx->reset_gpio)) {
-            gpio_free(ff_ctx->reset_gpio); }
+            gpio_free(ff_ctx->reset_gpio);
+            }
     }
 
     ff_ctx->b_driver_inited = false;
@@ -506,9 +952,11 @@ static int ff_ctl_acquire_wakelock(ff_context_t *ff_ctx, unsigned long arg)
 
     FF_LOGD("wake_lock_ms = %u", wake_lock_ms);
     if (wake_lock_ms == 0) {
-        __pm_stay_awake(&ff_ctx->wake_lock_ctl); }
+        wake_lock(&ff_ctx->wake_lock_ctl);
+    }
     else {
-        __pm_wakeup_event(&ff_ctx->wake_lock_ctl, wake_lock_ms); }
+        wake_lock_timeout(&ff_ctx->wake_lock_ctl, wake_lock_ms);
+    }
 
     FF_LOGD("'%s' leave.", __func__);
     return 0;
@@ -517,7 +965,7 @@ static int ff_ctl_acquire_wakelock(ff_context_t *ff_ctx, unsigned long arg)
 static int ff_ctl_release_wakelock(ff_context_t *ff_ctx)
 {
     FF_LOGD("'%s' enter.", __func__);
-    __pm_relax(&ff_ctx->wake_lock_ctl);
+    wake_unlock(&ff_ctx->wake_lock_ctl);
     FF_LOGD("'%s' leave.", __func__);
     return 0;
 }
@@ -544,7 +992,7 @@ static int ff_ctl_sync_config(ff_context_t *ff_ctx, unsigned long arg)
     }
 
     /* Take logging level effect. */
-    FF_LOGI("set log:%d->%d", g_ff_log_level, driver_config.log_level);
+    FF_LOGI("set log -> %d", driver_config.log_level);
     g_ff_log_level = driver_config.log_level;
     FF_LOGD("'%s' leave.", __func__);
     return 0;
@@ -581,99 +1029,100 @@ static long ff_ctl_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     FF_LOGV("ioctl cmd:%x,arg:%lx", (int)cmd, arg);
     switch (cmd) {
-    case FF_IOC_GET_EVENT_INFO:
-        FF_LOGV("get event info:%d", ff_ctx->poll_event);
-        ret = __put_user(ff_ctx->poll_event, (int __user *)arg);
-        ff_ctx->poll_event = FF_POLLEVT_NONE;
-        break;
-    case FF_IOC_INIT_DRIVER:
-        FF_LOGI("ioctrl:FF_IOC_INIT_DRIVER");
-        if (ff_ctx->b_driver_inited) {
-            FF_LOGI("ff driver inited, need free first");
-            ret = ff_ctl_free_driver(ff_ctx);
-            if (ret < 0) {
-                FF_LOGE("free driver fails");
-                return ret;
+        case FF_IOC_GET_EVENT_INFO:
+            FF_LOGV("get event info:%d", ff_ctx->poll_event);
+            ret = __put_user(ff_ctx->poll_event, (int __user *)arg);
+            ff_ctx->poll_event = FF_POLLEVT_NONE;
+            break;
+        case FF_IOC_INIT_DRIVER:
+            FF_LOGI("ioctrl:FF_IOC_INIT_DRIVER");
+            if (ff_ctx->b_driver_inited) {
+                FF_LOGI("ff driver inited, need free first");
+                ret = ff_ctl_free_driver(ff_ctx);
+                if (ret < 0) {
+                    FF_LOGE("free driver fails");
+                    return ret;
+                }
             }
-        }
-        ret = ff_ctl_init_driver(ff_ctx);
-        break;
-    case FF_IOC_FREE_DRIVER:
-        FF_LOGI("ioctrl:FF_IOC_FREE_DRIVER");
-        if (ff_ctx->b_driver_inited) {
-            ret = ff_ctl_free_driver(ff_ctx); }
-        break;
-    case FF_IOC_RESET_DEVICE:
-        FF_LOGD("need low->high");
-        ret = ff_set_reset(ff_ctx, 0);
-        msleep(10);
-        ret = ff_set_reset(ff_ctx, 1);
-        break;
-    case FF_IOC_RESET_DEVICE_HL:
-        ret = ff_set_reset(ff_ctx, !!arg);
-        break;
-    case FF_IOC_ENABLE_IRQ:
-        ret = ff_set_irq(ff_ctx, 1);
-        break;
-    case FF_IOC_DISABLE_IRQ:
-        ret = ff_set_irq(ff_ctx, 0);
-        break;
-    case FF_IOC_ENABLE_SPI_CLK:
-        ret = ff_set_spiclk(ff_ctx, 1);
-        break;
-    case FF_IOC_DISABLE_SPI_CLK:
-        ret = ff_set_spiclk(ff_ctx, 0);
-        break;
-    case FF_IOC_ENABLE_POWER:
-        ret = ff_power_on(ff_ctx, 1);
-        break;
-    case FF_IOC_DISABLE_POWER:
-        ret = ff_power_on(ff_ctx, 0);
-        break;
-    case FF_IOC_REPORT_KEY_EVENT:
-        ret = ff_ctl_report_key_event(ff_ctx, arg);
-        break;
-    case FF_IOC_SYNC_CONFIG:
-        ret = ff_ctl_sync_config(ff_ctx, arg);
-        break;
-    case FF_IOC_GET_VERSION:
-        ret = ff_ctl_get_version(ff_ctx, arg);
-        break;
-    case FF_IOC_SET_VENDOR_INFO:
-        break;
-    case FF_IOC_WAKELOCK_ACQUIRE:
-        ret = ff_ctl_acquire_wakelock(ff_ctx, arg);
-        break;
-    case FF_IOC_WAKELOCK_RELEASE:
-        ret = ff_ctl_release_wakelock(ff_ctx);
-        break;
-    case FF_IOC_GET_LOGLEVEL:
-        FF_LOGI("get log:%d", g_ff_log_level);
-        ret = __put_user(g_ff_log_level, (int __user *)arg);
-        break;
-    case FF_IOC_SET_LOGLEVEL:
-        ret = __get_user(g_ff_log_level, (int __user *)arg);
-        FF_LOGI("set log level:%d", g_ff_log_level);
-        break;
-    case FF_IOC_GET_FEATURE:
-        FF_LOGI("feature ver:%04xh", ff_ctx->feature.ver);
-        ret = copy_to_user((ff_feature_t __user *)arg, &ff_ctx->feature, sizeof(ff_feature_t));
-        break;
-    case FF_IOC_GET_EVENT_TYPE:
-        FF_LOGI("get event type:%d", ff_ctx->event_type);
-        ret = __put_user(ff_ctx->event_type, (int __user *)arg);
-        break;
-    case FF_IOC_SET_EVENT_TYPE:
-        ret = __get_user(ff_ctx->event_type, (int __user *)arg);
-        FF_LOGI("set event type:%d", ff_ctx->event_type);
-        break;
-    case FF_IOC_UNPROBE:
-        FF_LOGI("device unprobe");
-        ff_unprobe(ff_ctx);
-        break;
-    default:
-        ret = (-EINVAL);
-        break;
+            ret = ff_ctl_init_driver(ff_ctx);
+            break;
+        case FF_IOC_FREE_DRIVER:
+            FF_LOGI("ioctrl:FF_IOC_FREE_DRIVER");
+            if (ff_ctx->b_driver_inited) {
+                ret = ff_ctl_free_driver(ff_ctx);
+                }
+            break;
+        case FF_IOC_RESET_DEVICE:
+            FF_LOGD("need low->high");
+            ret = ff_set_reset(ff_ctx, 0);
+            msleep(10);
+            ret = ff_set_reset(ff_ctx, 1);
+            break;
+        case FF_IOC_RESET_DEVICE_HL:
+            ret = ff_set_reset(ff_ctx, !!arg);
+            break;
+        case FF_IOC_ENABLE_IRQ:
+            ret = ff_set_irq(ff_ctx, 1);
+            break;
+        case FF_IOC_DISABLE_IRQ:
+            ret = ff_set_irq(ff_ctx, 0);
+            break;
+        case FF_IOC_ENABLE_SPI_CLK:
+            ret = ff_set_spiclk(ff_ctx, 1);
+            break;
+        case FF_IOC_DISABLE_SPI_CLK:
+            ret = ff_set_spiclk(ff_ctx, 0);
+            break;
+        case FF_IOC_ENABLE_POWER:
+            ret = ff_power_on(ff_ctx, 1);
+            break;
+        case FF_IOC_DISABLE_POWER:
+            ret = ff_power_on(ff_ctx, 0);
+            break;
+        case FF_IOC_REPORT_KEY_EVENT:
+            ret = ff_ctl_report_key_event(ff_ctx, arg);
+            break;
+        case FF_IOC_SYNC_CONFIG:
+            ret = ff_ctl_sync_config(ff_ctx, arg);
+            break;
+        case FF_IOC_GET_VERSION:
+            ret = ff_ctl_get_version(ff_ctx, arg);
+            break;
+        case FF_IOC_SET_VENDOR_INFO:
+            break;
+        case FF_IOC_WAKELOCK_ACQUIRE:
+            ret = ff_ctl_acquire_wakelock(ff_ctx, arg);
+            break;
+        case FF_IOC_WAKELOCK_RELEASE:
+            ret = ff_ctl_release_wakelock(ff_ctx);
+            break;
+        case FF_IOC_GET_LOGLEVEL:
+            FF_LOGI("get log:%d", g_ff_log_level);
+            ret = __put_user(g_ff_log_level, (int __user *)arg);
+            break;
+        case FF_IOC_SET_LOGLEVEL:
+            ret = __get_user(g_ff_log_level, (int __user *)arg);
+            FF_LOGI("set log level:%d", g_ff_log_level);
+            break;
+        case FF_IOC_GET_FEATURE:
+            FF_LOGI("feature ver:%04xh", ff_ctx->feature.ver);
+            ret = copy_to_user((ff_feature_t __user *)arg, &ff_ctx->feature, sizeof(ff_feature_t));
+            break;
+        case FF_IOC_GET_EVENT_TYPE:
+            FF_LOGI("get event type:%d", ff_ctx->event_type);
+            ret = __put_user(ff_ctx->event_type, (int __user *)arg);
+            break;
+        case FF_IOC_SET_EVENT_TYPE:
+            ret = __get_user(ff_ctx->event_type, (int __user *)arg);
+            FF_LOGI("set event type:%d", ff_ctx->event_type);
+            break;
+        case FF_IOC_UNPROBE:
+            FF_LOGI("device unprobe");
+            ff_unprobe(ff_ctx);
+            break;
+        default:
+            ret = (-EINVAL);
+            break;
     }
 
     FF_LOGV("'%s' leave.", __func__);
@@ -693,7 +1142,8 @@ static unsigned int ff_ctl_poll(struct file *filp, struct poll_table_struct *wai
 
     poll_wait(filp, &ff_ctx->wait_queue_head, wait);
     if (ff_ctx->poll_event != FF_POLLEVT_NONE) {
-        mask |= POLLIN | POLLRDNORM; }
+        mask |= POLLIN | POLLRDNORM;
+        }
     FF_LOGV("'%s' leave.", __func__);
     return mask;
 }
@@ -703,8 +1153,12 @@ static int ff_ctl_open(struct inode *inode, struct file *filp)
     ff_context_t *ff_ctx = container_of(inode->i_cdev, ff_context_t, ff_cdev);
     FF_LOGV("'%s' enter.", __func__);
     /*Don't allow open device while b_ff_probe is 0*/
-    if (!ff_ctx || !ff_ctx->b_ff_probe) {
-        FF_LOGE("ff_ctx is null/probe(%d) fails", ff_ctx->b_ff_probe);
+    if (!ff_ctx) {
+        FF_LOGE("ff_ctx is null");
+        return -EINVAL;
+    }
+    if (!ff_ctx->b_ff_probe) {
+        FF_LOGE("ff_probe is null(%d) fails", ff_ctx->b_ff_probe);
         return -EINVAL;
     }
     filp->private_data = ff_ctx;
@@ -756,7 +1210,7 @@ static ssize_t ff_log_show(struct device *dev, struct device_attribute *attr, ch
 {
     ssize_t count = 0;
     FF_LOGV("'%s' enter.", __func__);
-    count += snprintf(buf + count, PAGE_SIZE, "log level:%d\n", g_ff_log_level);
+    count += snprintf(buf + count, PAGE_SIZE, "log level:%d\n", (int32_t)(g_ff_log_level));
     FF_LOGV("'%s' leave.", __func__);
     return count;
 }
@@ -818,7 +1272,11 @@ static ssize_t ff_irq_show(struct device *dev, struct device_attribute *attr, ch
     FF_LOGV("'%s' enter.", __func__);
     if (ff_ctx && (ff_ctx->irq_num > 0) && ff_ctx->b_driver_inited) {
         struct irq_desc *desc = irq_to_desc(ff_ctx->irq_num);
-        count = snprintf(buf, PAGE_SIZE, "irq_depth:%d\n", desc->depth);
+        if (!desc) {
+            FF_LOGE("irq_desc  is null");
+            return count;
+        }
+        count = snprintf(buf, PAGE_SIZE, "irq_depth:%u\n", desc->depth);
     }
     FF_LOGV("'%s' leave.", __func__);
     return count;
@@ -850,18 +1308,18 @@ static ssize_t ff_info_show(struct device *dev, struct device_attribute *attr, c
     FF_LOGV("'%s' enter.", __func__);
     if (ff_ctx) {
         count += snprintf(buf + count, PAGE_SIZE, "gpio,reset:%d,int:%d-%d,power:%d\n",
-                     ff_ctx->reset_gpio, ff_ctx->irq_gpio, ff_ctx->irq_num, ff_ctx->vdd_gpio);
+                    ff_ctx->reset_gpio, ff_ctx->irq_gpio, ff_ctx->irq_num, ff_ctx->vdd_gpio);
         count += snprintf(buf + count, PAGE_SIZE, "power_always_on:%d,use_regulator:%d,use_pinctrl:%d\n",
-                     ff_ctx->b_power_always_on, ff_ctx->b_use_regulator, ff_ctx->b_use_pinctrl);
+                    ff_ctx->b_power_always_on, ff_ctx->b_use_regulator, ff_ctx->b_use_pinctrl);
         count += snprintf(buf + count, PAGE_SIZE, "read_chip:%d,ree:%d,screen on/off:%d\n",
-                     ff_ctx->b_read_chipid, ff_ctx->b_ree, ff_ctx->b_screen_onoff_event);
+                    ff_ctx->b_read_chipid, ff_ctx->b_ree, ff_ctx->b_screen_onoff_event);
 
         count += snprintf(buf + count, PAGE_SIZE, "driver_init:%d,power_on:%d,irq_en:%d,spiclk_en:%d\n",
-                     ff_ctx->b_driver_inited, ff_ctx->b_power_on, ff_ctx->b_irq_enabled, ff_ctx->b_spiclk_enabled);
+                    ff_ctx->b_driver_inited, ff_ctx->b_power_on, ff_ctx->b_irq_enabled, ff_ctx->b_spiclk_enabled);
 
         count += snprintf(buf + count, PAGE_SIZE, "gesture_en:%d,%d-%d-%d-%d\n", ff_ctx->b_gesture_support,
-                     ff_ctx->ff_config.gesture_keycode[0], ff_ctx->ff_config.gesture_keycode[1],
-                     ff_ctx->ff_config.gesture_keycode[2], ff_ctx->ff_config.gesture_keycode[3]);
+                    ff_ctx->ff_config.gesture_keycode[0], ff_ctx->ff_config.gesture_keycode[1],
+                    ff_ctx->ff_config.gesture_keycode[2], ff_ctx->ff_config.gesture_keycode[3]);
     }
     FF_LOGV("'%s' leave.", __func__);
     return count;
@@ -905,7 +1363,7 @@ static void ff_work_device_event(struct work_struct *ws)
     FF_LOGV("'%s' enter.", __func__);
 
     /* System should keep wakeup for 2 seconds at least. */
-    __pm_wakeup_event(&ff_ctx->wake_lock, jiffies_to_msecs(FF_WAKELOCK_TIMEOUT));
+    wake_lock_timeout(&ff_ctx->wake_lock, msecs_to_jiffies(FF_WAKELOCK_TIMEOUT));
 
     FF_LOGD("%s(irq = %d, ..) toggled.", __func__, ff_ctx->irq_num);
     if (ff_ctx->event_type == FF_EVENT_POLL) {
@@ -914,7 +1372,8 @@ static void ff_work_device_event(struct work_struct *ws)
     } else if (ff_ctx->event_type == FF_EVENT_NETLINK) {
         kobject_uevent_env(&ff_ctx->fp_dev->kobj, KOBJ_CHANGE, uevent_env);
     } else {
-        FF_LOGE("unknowed event type:%d", ff_ctx->event_type); }
+        FF_LOGE("unknowed event type:%d", ff_ctx->event_type);
+        }
         FF_LOGV("'%s' leave.", __func__);
 }
 
@@ -925,13 +1384,13 @@ static irqreturn_t ff_irq_handler(int irq, void *dev_id)
 
     if (ff_ctx && (likely(irq == ff_ctx->irq_num))) {
         if (ff_ctx->ff_config.enable_fasync && ff_ctx->async_queue) {
-            FF_LOGV("'%s' start kill_fasync ...");
+            FF_LOGV("'%s' start kill_fasync ...", __func__);
             kill_fasync(&ff_ctx->async_queue, SIGIO, POLL_IN);
-            FF_LOGV("'%s' end kill_fasync ...");
+            FF_LOGV("'%s' end kill_fasync ...", __func__);
         } else {
-            FF_LOGV("'%s' start schedule_work ...");
+            FF_LOGV("'%s' start schedule_work ...", __func__);
             schedule_work(&ff_ctx->event_work);
-            FF_LOGV("'%s' end schedule_work ...");
+            FF_LOGV("'%s' end schedule_work ...", __func__);
         }
     }
 
@@ -1016,7 +1475,7 @@ static int ff_init_pins(ff_context_t *ff_ctx)
         ff_ctx->pins_reset_high = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_reset_high");
         if (IS_ERR_OR_NULL(ff_ctx->pins_reset_high)) {
             ret = PTR_ERR(ff_ctx->pins_reset_high);
-            FF_LOGE("pins_reset_high not found,ret=%d", ret);
+            FF_LOGE("ff_pins_reset_high not found,ret=%d", ret);
             devm_pinctrl_put(ff_ctx->pinctrl);
             ff_ctx->pins_reset_low = NULL;
             return ret;
@@ -1029,68 +1488,6 @@ static int ff_init_pins(ff_context_t *ff_ctx)
             devm_pinctrl_put(ff_ctx->pinctrl);
             ff_ctx->pins_reset_low = NULL;
             ff_ctx->pins_reset_high = NULL;
-            return ret;
-        }
-
-        ff_ctx->pins_power_low = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_power_low");
-        if (IS_ERR_OR_NULL(ff_ctx->pins_power_low)) {
-            ret = PTR_ERR(ff_ctx->pins_power_low);
-            FF_LOGE("ff_pins_power_low not found,ret=%d", ret);
-            devm_pinctrl_put(ff_ctx->pinctrl);
-            ff_ctx->pins_reset_low = NULL;
-            ff_ctx->pins_reset_high = NULL;
-            ff_ctx->pins_irq_as_int = NULL;
-            return ret;
-        }
-
-        ff_ctx->pins_power_high = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_power_high");
-        if (IS_ERR_OR_NULL(ff_ctx->pins_power_high)) {
-            ret = PTR_ERR(ff_ctx->pins_power_high);
-            FF_LOGE("ff_pins_power_high not found,ret=%d", ret);
-            devm_pinctrl_put(ff_ctx->pinctrl);
-            ff_ctx->pins_reset_low = NULL;
-            ff_ctx->pins_reset_high = NULL;
-            ff_ctx->pins_irq_as_int = NULL;
-            ff_ctx->pins_power_low = NULL;
-            return ret;
-        }
-
-        /*set irq to INT mode as default*/
-        ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_irq_as_int);
-        if (ret < 0) {
-            FF_LOGE("pinctrl_select_state:pins_irq_as_int fails");
-            devm_pinctrl_put(ff_ctx->pinctrl);
-            ff_ctx->pins_reset_low = NULL;
-            ff_ctx->pins_reset_high = NULL;
-            ff_ctx->pins_irq_as_int = NULL;
-            ff_ctx->pins_power_low = NULL;
-            ff_ctx->pins_power_high = NULL;
-            return ret;
-        }
-
-        /*set reset to low as default*/
-        ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_reset_low);
-        if (ret < 0) {
-            FF_LOGE("pinctrl_select_state:pins_reset_low fails");
-            devm_pinctrl_put(ff_ctx->pinctrl);
-            ff_ctx->pins_reset_low = NULL;
-            ff_ctx->pins_reset_high = NULL;
-            ff_ctx->pins_irq_as_int = NULL;
-            ff_ctx->pins_power_low = NULL;
-            ff_ctx->pins_power_high = NULL;
-            return ret;
-        }
-
-        /*set power to low as default*/
-        ret = pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_power_low);
-        if (ret < 0) {
-            FF_LOGE("pinctrl_select_state:pins_power_low fails");
-            devm_pinctrl_put(ff_ctx->pinctrl);
-            ff_ctx->pins_reset_low = NULL;
-            ff_ctx->pins_reset_high = NULL;
-            ff_ctx->pins_irq_as_int = NULL;
-            ff_ctx->pins_power_low = NULL;
-            ff_ctx->pins_power_high = NULL;
             return ret;
         }
 
@@ -1120,7 +1517,8 @@ static int ff_init_pins(ff_context_t *ff_ctx)
             if (ret) {
                 FF_LOGE("reset gpio request failed");
                 if (gpio_is_valid(ff_ctx->irq_gpio)) {
-                    gpio_free(ff_ctx->irq_gpio); }
+                    gpio_free(ff_ctx->irq_gpio);
+                    }
                 return ret;
             }
 
@@ -1128,12 +1526,117 @@ static int ff_init_pins(ff_context_t *ff_ctx)
             if (ret < 0) {
                 FF_LOGE("set_direction for reset gpio failed");
                 if (gpio_is_valid(ff_ctx->irq_gpio)) {
-                    gpio_free(ff_ctx->irq_gpio); }
+                    gpio_free(ff_ctx->irq_gpio);
+                    }
                 gpio_free(ff_ctx->reset_gpio);
                 return ret;
             }
         }
         FF_LOGI("get irq and reset gpio success");
+
+        /*get pinctrl from DTS*/
+        ff_ctx->pinctrl = devm_pinctrl_get(&ff_ctx->pdev->dev);
+        if (IS_ERR_OR_NULL(ff_ctx->pinctrl)) {
+            ret = PTR_ERR(ff_ctx->pinctrl);
+            FF_LOGE("Failed to get pinctrl, please check dts,ret=%d", ret);
+            return ret;
+        }
+
+        ff_ctx->pins_spi_cs_mode = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_cs_mode");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_cs_mode)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_cs_mode);
+            FF_LOGE("ff_pins_cs_mode not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_clk = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_clk");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_clk)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_clk);
+            FF_LOGE("ff_pins_spi_clk not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_mosi = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_mosi");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_mosi)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_mosi);
+            FF_LOGE("ff_pins_spi_mosi not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_miso = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_miso");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_miso)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_miso);
+            FF_LOGE("ff_pins_spi_miso not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_clk_low = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_clk_low");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_clk_low)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_clk_low);
+            FF_LOGE("ff_pins_spi_clk_low not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_mosi_low = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_mosi_low");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_mosi_low)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_mosi_low);
+            FF_LOGE("ff_pins_spi_mosi_low not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_miso_low = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_miso_low");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_miso_low)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_miso_low);
+            FF_LOGE("ff_pins_spi_miso_low not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+        ff_ctx->pins_spi_cs_low = pinctrl_lookup_state(ff_ctx->pinctrl, "ff_pins_spi_cs_low");
+        if (IS_ERR_OR_NULL(ff_ctx->pins_spi_cs_low)) {
+            ret = PTR_ERR(ff_ctx->pins_spi_cs_low);
+            FF_LOGE("ff_pins_spi_cs_low not found,ret=%d", ret);
+            devm_pinctrl_put(ff_ctx->pinctrl);
+            ff_ctx->pins_reset_low = NULL;
+            ff_ctx->pins_reset_high = NULL;
+            ff_ctx->pins_irq_as_int = NULL;
+            ff_ctx->pins_power_low = NULL;
+            return ret;
+        }
+
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_cs_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_clk_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_miso_low);
+        pinctrl_select_state(ff_ctx->pinctrl, ff_ctx->pins_spi_mosi_low);
+
+        FF_LOGI("pinctrl_select_state SPI ok");
     }
 
     FF_LOGD("'%s' leave.", __func__);
@@ -1278,7 +1781,7 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
     int *blank = NULL;
     ff_context_t *ff_ctx = container_of(self, ff_context_t, fb_notif);
     char *uevent_env[2];
-    bool this_screen_on;
+    bool this_screen_on = false;
 
     FF_LOGV("'%s' enter.", __func__);
     if (!ff_ctx || !evdata) {
@@ -1294,18 +1797,18 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
     blank = evdata->data;
     FF_LOGD("FB event:%lu,blank:%d", event, *blank);
     switch (*blank) {
-    case FB_BLANK_UNBLANK:
-        uevent_env[0] = "FF_SCREEN_ON";
-        this_screen_on = true;
-        break;
-    case FB_BLANK_POWERDOWN:
-        uevent_env[0] = "FF_SCREEN_OFF";
-        this_screen_on = false;
-        break;
-    default:
-        FF_LOGI("FB BLANK(%d) do not need process\n", *blank);
-        uevent_env[0] = "FF_SCREEN_??";
-        break;
+        case FB_BLANK_UNBLANK:
+            uevent_env[0] = "FF_SCREEN_ON";
+            this_screen_on = true;
+            break;
+        case FB_BLANK_POWERDOWN:
+            uevent_env[0] = "FF_SCREEN_OFF";
+            this_screen_on = false;
+            break;
+        default:
+            FF_LOGI("FB BLANK(%d) do not need process\n", *blank);
+            uevent_env[0] = "FF_SCREEN_??";
+            break;
     }
 
     if (ff_ctx->b_screen_onoff_event && (ff_ctx->b_screen_on ^ this_screen_on)) {
@@ -1358,8 +1861,8 @@ static int ff_probe(struct platform_device *pdev)
     init_waitqueue_head(&ff_ctx->wait_queue_head);
 
     /* Init the wake lock. */
-    wakeup_source_init(&ff_ctx->wake_lock, "ff_wake_lock");
-    wakeup_source_init(&ff_ctx->wake_lock_ctl, "ff_wake_lock_ctl");
+    wake_lock_init(&ff_ctx->wake_lock, WAKE_LOCK_SUSPEND, "ff_wake_lock");
+    wake_lock_init(&ff_ctx->wake_lock_ctl, WAKE_LOCK_SUSPEND, "ff_wake_lock_ctl");
 
     ret = ff_register_device(ff_ctx);
     if (ret < 0) {
@@ -1377,7 +1880,8 @@ static int ff_probe(struct platform_device *pdev)
         ff_ctx->fb_notif.notifier_call = fb_notifier_callback;
         ret = fb_register_client(&ff_ctx->fb_notif);
         if (ret) {
-            FF_LOGE("Unable to register fb_notifier,ret=%d", ret); }
+            FF_LOGE("Unable to register fb_notifier,ret=%d", ret);
+            }
 #endif
     }
 
@@ -1389,8 +1893,8 @@ static int ff_probe(struct platform_device *pdev)
     return 0;
 
 err_register_device:
-    wakeup_source_trash(&ff_ctx->wake_lock);
-    wakeup_source_trash(&ff_ctx->wake_lock_ctl);
+    wake_lock_destroy(&ff_ctx->wake_lock);
+    wake_lock_destroy(&ff_ctx->wake_lock_ctl);
 
     cancel_work_sync(&ff_ctx->event_work);
 
@@ -1412,8 +1916,8 @@ static void ff_unprobe(ff_context_t *ff_ctx)
         sysfs_remove_group(&ff_ctx->pdev->dev.kobj, &ff_attrs_group);
 
         /* De-init the wake lock. */
-        wakeup_source_trash(&ff_ctx->wake_lock);
-        wakeup_source_trash(&ff_ctx->wake_lock_ctl);
+        wake_lock_destroy(&ff_ctx->wake_lock);
+        wake_lock_destroy(&ff_ctx->wake_lock_ctl);
         cancel_work_sync(&ff_ctx->event_work);
 
         if (ff_ctx->b_screen_onoff_event) {
@@ -1439,8 +1943,8 @@ static int ff_remove(struct platform_device *pdev)
         sysfs_remove_group(&pdev->dev.kobj, &ff_attrs_group);
 
         /* De-init the wake lock. */
-        wakeup_source_trash(&ff_ctx->wake_lock);
-        wakeup_source_trash(&ff_ctx->wake_lock_ctl);
+        wake_lock_destroy(&ff_ctx->wake_lock);
+        wake_lock_destroy(&ff_ctx->wake_lock_ctl);
         cancel_work_sync(&ff_ctx->event_work);
 
         if (ff_ctx->b_screen_onoff_event) {

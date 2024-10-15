@@ -19,6 +19,9 @@
 #include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/list.h>
+#include <linux/debugfs.h>
+#include <linux/sched/clock.h>
+
 #ifdef CONFIG_OPLUS_CHG_OOS
 #include <linux/oem/oplus_chg.h>
 #else
@@ -29,6 +32,7 @@
 #include "../hal/oplus_chg_ic.h"
 #include "oplus_nu1619a_fw.h"
 #include "oplus_nu1619a_reg.h"
+#include "../oplus_chg_track.h"
 
 #ifndef I2C_ERR_MAX
 #define I2C_ERR_MAX 6
@@ -98,6 +102,7 @@ struct oplus_nu1619 {
 	int adapter_type;
 	int rx_pwr_cap;
 	int tx_status;
+	bool support_epp_11w;
 
 	struct mutex i2c_lock;
 
@@ -121,10 +126,43 @@ struct oplus_nu1619 {
 	struct oplus_chg_mod *wls_ocm;
 	struct rx_msg_struct rx_msg;
 	struct completion ldo_on;
+
+	char chg_power_info[OPLUS_CHG_TRACK_CURX_INFO_LEN];
+	char err_reason[OPLUS_CHG_TRACK_DEVICE_ERR_NAME_LEN];
+	char wls_crux_info[OPLUS_CHG_TRACK_CURX_INFO_LEN];
+	struct mutex track_upload_lock;
+
+	struct mutex track_i2c_err_lock;
+	u32 debug_force_i2c_err;
+	bool i2c_err_uploading;
+	oplus_chg_track_trigger *i2c_err_load_trigger;
+	struct delayed_work i2c_err_load_trigger_work;
+
+	struct mutex track_rx_err_lock;
+	u32 debug_force_rx_err;
+	bool rx_err_uploading;
+	oplus_chg_track_trigger *rx_err_load_trigger;
+	struct delayed_work rx_err_load_trigger_work;
+
+	struct mutex track_tx_err_lock;
+	u32 debug_force_tx_err;
+	bool tx_err_uploading;
+	oplus_chg_track_trigger *tx_err_load_trigger;
+	struct delayed_work tx_err_load_trigger_work;
+
+	struct mutex track_update_err_lock;
+	u32 debug_force_update_err;
+	bool update_err_uploading;
+	oplus_chg_track_trigger *update_err_load_trigger;
+	struct delayed_work update_err_load_trigger_work;
+
+	u32 debug_force_upload_period;
 };
 
 static int nu1619_get_running_mode(struct oplus_nu1619 *chip);
 static int nu1619_get_power_cap(struct oplus_nu1619 *chip);
+static int nu1619_track_upload_i2c_err_info(
+	struct oplus_nu1619 *chip, int err_type, u16 reg);
 
 static bool nu1619_rx_is_connected(struct oplus_chg_ic_dev *dev)
 {
@@ -193,6 +231,7 @@ static int nu1619_read_byte(struct oplus_nu1619 *chip, u16 addr, u8 *data)
 	if (rc < 2) {
 		pr_err("read 0x%04x error, rc=%d\n", addr, rc);
 		rc = rc < 0 ? rc : -EIO;
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 		goto error;
 	}
 
@@ -205,6 +244,8 @@ static int nu1619_read_byte(struct oplus_nu1619 *chip, u16 addr, u8 *data)
 
 	mutex_unlock(&chip->i2c_lock);
 	nu1619_i2c_err_clr();
+	if (chip->debug_force_i2c_err)
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 	return 0;
 
 error:
@@ -223,6 +264,7 @@ static int nu1619_read_data(struct oplus_nu1619 *chip, u16 addr, u8 *buf, int le
 	if (rc < 2) {
 		pr_err("read 0x%04x error, rc=%d\n", addr, rc);
 		rc = rc < 0 ? rc : -EIO;
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 		goto error;
 	}
 
@@ -230,11 +272,14 @@ static int nu1619_read_data(struct oplus_nu1619 *chip, u16 addr, u8 *buf, int le
 	if (rc < len) {
 		pr_err("read 0x%04x error, rc=%d\n", addr, rc);
 		rc = rc < 0 ? rc : -EIO;
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 		goto error;
 	}
 
 	mutex_unlock(&chip->i2c_lock);
 	nu1619_i2c_err_clr();
+	if (chip->debug_force_i2c_err)
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 	return 0;
 
 error:
@@ -255,6 +300,7 @@ static int nu1619_write_byte(struct oplus_nu1619 *chip, u16 addr, u8 data)
 		mutex_unlock(&chip->i2c_lock);
 		nu1619_i2c_err_inc(chip);
 		rc = rc < 0 ? rc : -EIO;
+		nu1619_track_upload_i2c_err_info(chip, rc, addr);
 		return rc;
 	}
 	mutex_unlock(&chip->i2c_lock);
@@ -343,6 +389,511 @@ __maybe_unused static int nu1619_write_byte_mask(struct oplus_nu1619 *chip, u16 
 		return rc;
 
 	return 0;
+}
+
+#define TRACK_LOCAL_T_NS_TO_S_THD		1000000000
+#define TRACK_UPLOAD_COUNT_MAX		10
+#define TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD	(24 * 3600)
+static int nu1619_track_get_local_time_s(void)
+{
+	int local_time_s;
+
+	local_time_s = local_clock() / TRACK_LOCAL_T_NS_TO_S_THD;
+	pr_info("local_time_s:%d\n", local_time_s);
+
+	return local_time_s;
+}
+
+static int nu1619_track_upload_i2c_err_info(
+	struct oplus_nu1619 *chip, int err_type, u16 reg)
+{
+	int index = 0;
+	int curr_time;
+	static int upload_count = 0;
+	static int pre_upload_time = 0;
+
+	if (!chip)
+		return -EINVAL;
+
+	mutex_lock(&chip->track_upload_lock);
+	memset(chip->chg_power_info, 0, sizeof(chip->chg_power_info));
+	memset(chip->err_reason, 0, sizeof(chip->err_reason));
+	curr_time = nu1619_track_get_local_time_s();
+	if (curr_time - pre_upload_time > TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD)
+		upload_count = 0;
+
+	if (chip->debug_force_upload_period > 0 &&
+	    curr_time - pre_upload_time > chip->debug_force_upload_period)
+		upload_count = 0;
+
+	if (upload_count > TRACK_UPLOAD_COUNT_MAX) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (chip->debug_force_i2c_err)
+		err_type = -chip->debug_force_i2c_err;
+
+	mutex_lock(&chip->track_i2c_err_lock);
+	if (chip->i2c_err_uploading) {
+		pr_info("i2c_err_uploading, should return\n");
+		mutex_unlock(&chip->track_i2c_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (chip->i2c_err_load_trigger)
+		kfree(chip->i2c_err_load_trigger);
+	chip->i2c_err_load_trigger = kzalloc(sizeof(oplus_chg_track_trigger), GFP_KERNEL);
+	if (!chip->i2c_err_load_trigger) {
+		pr_err("i2c_err_load_trigger memery alloc fail\n");
+		mutex_unlock(&chip->track_i2c_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return -ENOMEM;
+	}
+	chip->i2c_err_load_trigger->type_reason =
+		TRACK_NOTIFY_TYPE_DEVICE_ABNORMAL;
+	chip->i2c_err_load_trigger->flag_reason =
+		TRACK_NOTIFY_FLAG_WLS_TRX_ABNORMAL;
+	chip->i2c_err_uploading = true;
+	upload_count++;
+	pre_upload_time = nu1619_track_get_local_time_s();
+	mutex_unlock(&chip->track_i2c_err_lock);
+
+	index += snprintf(
+		&(chip->i2c_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$device_id@@%s",
+		"nu1619");
+	index += snprintf(
+		&(chip->i2c_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$err_scene@@%s",
+		OPLUS_CHG_TRACK_SCENE_I2C_ERR);
+
+	oplus_chg_track_get_i2c_err_reason(err_type, chip->err_reason, sizeof(chip->err_reason));
+	index += snprintf(
+		&(chip->i2c_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+		"$$err_reason@@%s", chip->err_reason);
+
+	oplus_chg_track_obtain_power_info(chip->chg_power_info, sizeof(chip->chg_power_info));
+	index += snprintf(&(chip->i2c_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s", chip->chg_power_info);
+	index += snprintf(&(chip->i2c_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+			"$$access_reg@@0x%x", reg);
+	schedule_delayed_work(&chip->i2c_err_load_trigger_work, 0);
+	mutex_unlock(&chip->track_upload_lock);
+	pr_info("success\n");
+
+	return 0;
+}
+
+static void nu1619_track_i2c_err_load_trigger_work(
+	struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct oplus_nu1619 *chip =
+		container_of(dwork, struct oplus_nu1619, i2c_err_load_trigger_work);
+
+	if (!chip->i2c_err_load_trigger)
+		return;
+
+	oplus_chg_track_upload_trigger_data(*(chip->i2c_err_load_trigger));
+	if (chip->i2c_err_load_trigger) {
+		kfree(chip->i2c_err_load_trigger);
+		chip->i2c_err_load_trigger = NULL;
+	}
+	chip->i2c_err_uploading = false;
+}
+
+static int nu1619_track_upload_wls_rx_err_info(
+	struct oplus_nu1619 *chip, int err_type)
+{
+	int index = 0;
+	int curr_time;
+	static int upload_count = 0;
+	static int pre_upload_time = 0;
+
+	if (!chip)
+		return -EINVAL;
+
+	pr_info("start\n");
+	mutex_lock(&chip->track_upload_lock);
+	memset(chip->chg_power_info, 0, sizeof(chip->chg_power_info));
+	memset(chip->err_reason, 0, sizeof(chip->err_reason));
+	memset(chip->wls_crux_info, 0, sizeof(chip->wls_crux_info));
+	curr_time = nu1619_track_get_local_time_s();
+	if (curr_time - pre_upload_time > TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD)
+		upload_count = 0;
+
+	if (chip->debug_force_upload_period > 0 &&
+	    curr_time - pre_upload_time > chip->debug_force_upload_period)
+		upload_count = 0;
+
+	if (err_type == TRACK_WLS_TRX_ERR_DEFAULT) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (upload_count > TRACK_UPLOAD_COUNT_MAX) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	mutex_lock(&chip->track_rx_err_lock);
+	if (chip->rx_err_uploading) {
+		pr_info("rx_err_uploading, should return\n");
+		mutex_unlock(&chip->track_rx_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (chip->rx_err_load_trigger)
+		kfree(chip->rx_err_load_trigger);
+	chip->rx_err_load_trigger = kzalloc(sizeof(oplus_chg_track_trigger), GFP_KERNEL);
+	if (!chip->rx_err_load_trigger) {
+		pr_err("rx_err_load_trigger memery alloc fail\n");
+		mutex_unlock(&chip->track_rx_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return -ENOMEM;
+	}
+	chip->rx_err_load_trigger->type_reason =
+		TRACK_NOTIFY_TYPE_DEVICE_ABNORMAL;
+	chip->rx_err_load_trigger->flag_reason =
+		TRACK_NOTIFY_FLAG_WLS_TRX_ABNORMAL;
+	chip->rx_err_uploading = true;
+	upload_count++;
+	pre_upload_time = nu1619_track_get_local_time_s();
+	mutex_unlock(&chip->track_rx_err_lock);
+
+	index += snprintf(
+		&(chip->rx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$device_id@@%s",
+		"nu1619");
+	index += snprintf(
+		&(chip->rx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$err_scene@@%s",
+		OPLUS_CHG_TRACK_SCENE_WLS_RX_ERR);
+
+	oplus_chg_track_get_wls_trx_err_reason(err_type, chip->err_reason, sizeof(chip->err_reason));
+	index += snprintf(
+		&(chip->rx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+		"$$err_reason@@%s", chip->err_reason);
+
+	oplus_chg_track_obtain_power_info(chip->chg_power_info, sizeof(chip->chg_power_info));
+	index += snprintf(&(chip->rx_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s", chip->chg_power_info);
+	oplus_chg_track_obtain_wls_general_crux_info(
+		chip->wls_crux_info, sizeof(chip->wls_crux_info));
+	index += snprintf(&(chip->rx_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+			"%s", chip->wls_crux_info);
+	schedule_delayed_work(&chip->rx_err_load_trigger_work, 0);
+	mutex_unlock(&chip->track_upload_lock);
+	pr_info("success\n");
+
+	return 0;
+}
+
+static void nu1619_track_rx_err_load_trigger_work(
+	struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct oplus_nu1619 *chip =
+		container_of(dwork, struct oplus_nu1619, rx_err_load_trigger_work);
+
+	if (!chip->rx_err_load_trigger)
+		return;
+
+	oplus_chg_track_upload_trigger_data(*(chip->rx_err_load_trigger));
+	if (chip->rx_err_load_trigger) {
+		kfree(chip->rx_err_load_trigger);
+		chip->rx_err_load_trigger = NULL;
+	}
+	chip->rx_err_uploading = false;
+}
+
+static int nu1619_track_upload_wls_tx_err_info(
+	struct oplus_nu1619 *chip, int err_type)
+{
+	int index = 0;
+	int curr_time;
+	static int upload_count = 0;
+	static int pre_upload_time = 0;
+
+	if (!chip)
+		return -EINVAL;
+
+	mutex_lock(&chip->track_upload_lock);
+	memset(chip->chg_power_info, 0, sizeof(chip->chg_power_info));
+	memset(chip->err_reason, 0, sizeof(chip->err_reason));
+	memset(chip->wls_crux_info, 0, sizeof(chip->wls_crux_info));
+	curr_time = nu1619_track_get_local_time_s();
+	if (curr_time - pre_upload_time > TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD)
+		upload_count = 0;
+
+	if (chip->debug_force_upload_period > 0 &&
+	    curr_time - pre_upload_time > chip->debug_force_upload_period)
+		upload_count = 0;
+
+	if (err_type == TRACK_WLS_TRX_ERR_DEFAULT) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (upload_count > TRACK_UPLOAD_COUNT_MAX) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	mutex_lock(&chip->track_tx_err_lock);
+	if (chip->tx_err_uploading) {
+		pr_info("tx_err_uploading, should return\n");
+		mutex_unlock(&chip->track_tx_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (chip->tx_err_load_trigger)
+		kfree(chip->tx_err_load_trigger);
+	chip->tx_err_load_trigger = kzalloc(sizeof(oplus_chg_track_trigger), GFP_KERNEL);
+	if (!chip->tx_err_load_trigger) {
+		pr_err("tx_err_load_trigger memery alloc fail\n");
+		mutex_unlock(&chip->track_tx_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return -ENOMEM;
+	}
+	chip->tx_err_load_trigger->type_reason =
+		TRACK_NOTIFY_TYPE_DEVICE_ABNORMAL;
+	chip->tx_err_load_trigger->flag_reason =
+		TRACK_NOTIFY_FLAG_WLS_TRX_ABNORMAL;
+	chip->tx_err_uploading = true;
+	upload_count++;
+	pre_upload_time = nu1619_track_get_local_time_s();
+	mutex_unlock(&chip->track_tx_err_lock);
+
+	index += snprintf(
+		&(chip->tx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$device_id@@%s",
+		"nu1619");
+	index += snprintf(
+		&(chip->tx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$err_scene@@%s",
+		OPLUS_CHG_TRACK_SCENE_WLS_TX_ERR);
+
+	oplus_chg_track_get_wls_trx_err_reason(err_type, chip->err_reason, sizeof(chip->err_reason));
+	index += snprintf(
+		&(chip->tx_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+		"$$err_reason@@%s", chip->err_reason);
+
+	oplus_chg_track_obtain_power_info(chip->chg_power_info, sizeof(chip->chg_power_info));
+	index += snprintf(&(chip->tx_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s", chip->chg_power_info);
+	oplus_chg_track_obtain_wls_general_crux_info(
+		chip->wls_crux_info, sizeof(chip->wls_crux_info));
+	index += snprintf(&(chip->tx_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+			"%s", chip->wls_crux_info);
+	schedule_delayed_work(&chip->tx_err_load_trigger_work, 0);
+	mutex_unlock(&chip->track_upload_lock);
+	pr_info("success\n");
+
+	return 0;
+}
+
+static void nu1619_track_tx_err_load_trigger_work(
+	struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct oplus_nu1619 *chip =
+		container_of(dwork, struct oplus_nu1619, tx_err_load_trigger_work);
+
+	if (!chip->tx_err_load_trigger)
+		return;
+
+	oplus_chg_track_upload_trigger_data(*(chip->tx_err_load_trigger));
+	if (chip->tx_err_load_trigger) {
+		kfree(chip->tx_err_load_trigger);
+		chip->tx_err_load_trigger = NULL;
+	}
+	chip->tx_err_uploading = false;
+}
+
+static int nu1619_track_upload_wls_update_err_info(
+	struct oplus_nu1619 *chip, int err_type)
+{
+	int index = 0;
+	int curr_time;
+	static int upload_count = 0;
+	static int pre_upload_time = 0;
+
+	if (!chip)
+		return -EINVAL;
+
+	mutex_lock(&chip->track_upload_lock);
+	memset(chip->chg_power_info, 0, sizeof(chip->chg_power_info));
+	memset(chip->err_reason, 0, sizeof(chip->err_reason));
+	curr_time = nu1619_track_get_local_time_s();
+	if (curr_time - pre_upload_time > TRACK_DEVICE_ABNORMAL_UPLOAD_PERIOD)
+		upload_count = 0;
+
+	if (chip->debug_force_upload_period > 0 &&
+	    curr_time - pre_upload_time > chip->debug_force_upload_period)
+		upload_count = 0;
+
+	if (err_type == TRACK_WLS_TRX_ERR_DEFAULT) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (upload_count > TRACK_UPLOAD_COUNT_MAX) {
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	mutex_lock(&chip->track_update_err_lock);
+	if (chip->update_err_uploading) {
+		pr_info("update_err_uploading, should return\n");
+		mutex_unlock(&chip->track_update_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return 0;
+	}
+
+	if (chip->update_err_load_trigger)
+		kfree(chip->update_err_load_trigger);
+	chip->update_err_load_trigger = kzalloc(sizeof(oplus_chg_track_trigger), GFP_KERNEL);
+	if (!chip->update_err_load_trigger) {
+		pr_err("update_err_load_trigger memery alloc fail\n");
+		mutex_unlock(&chip->track_update_err_lock);
+		mutex_unlock(&chip->track_upload_lock);
+		return -ENOMEM;
+	}
+	chip->update_err_load_trigger->type_reason =
+		TRACK_NOTIFY_TYPE_DEVICE_ABNORMAL;
+	chip->update_err_load_trigger->flag_reason =
+		TRACK_NOTIFY_FLAG_WLS_TRX_ABNORMAL;
+	chip->update_err_uploading = true;
+	upload_count++;
+	pre_upload_time = nu1619_track_get_local_time_s();
+	mutex_unlock(&chip->track_update_err_lock);
+
+	index += snprintf(
+		&(chip->update_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$device_id@@%s",
+		"nu1619");
+	index += snprintf(
+		&(chip->update_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "$$err_scene@@%s",
+		OPLUS_CHG_TRACK_SCENE_WLS_UPDATE_ERR);
+
+	oplus_chg_track_get_wls_trx_err_reason(err_type, chip->err_reason, sizeof(chip->err_reason));
+	index += snprintf(
+		&(chip->update_err_load_trigger->crux_info[index]),
+		OPLUS_CHG_TRACK_CURX_INFO_LEN - index,
+		"$$err_reason@@%s", chip->err_reason);
+
+	oplus_chg_track_obtain_power_info(chip->chg_power_info, sizeof(chip->chg_power_info));
+	index += snprintf(&(chip->update_err_load_trigger->crux_info[index]),
+			OPLUS_CHG_TRACK_CURX_INFO_LEN - index, "%s", chip->chg_power_info);
+	schedule_delayed_work(&chip->update_err_load_trigger_work, 0);
+	mutex_unlock(&chip->track_upload_lock);
+	pr_info("success\n");
+
+	return 0;
+}
+
+static void nu1619_track_update_err_load_trigger_work(
+	struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct oplus_nu1619 *chip =
+		container_of(dwork, struct oplus_nu1619, update_err_load_trigger_work);
+
+	if (!chip->update_err_load_trigger)
+		return;
+
+	oplus_chg_track_upload_trigger_data(*(chip->update_err_load_trigger));
+	if (chip->update_err_load_trigger) {
+		kfree(chip->update_err_load_trigger);
+		chip->update_err_load_trigger = NULL;
+	}
+	chip->update_err_uploading = false;
+}
+
+static int nu1619_track_debugfs_init(struct oplus_nu1619 *chip)
+{
+	int ret = 0;
+	struct dentry *debugfs_root;
+	struct dentry *debugfs_nu1619;
+
+	debugfs_root = oplus_chg_track_get_debugfs_root();
+	if (!debugfs_root) {
+		ret = -ENOENT;
+		return ret;
+	}
+
+	debugfs_nu1619 = debugfs_create_dir("nu1619", debugfs_root);
+	if (!debugfs_nu1619) {
+		ret = -ENOENT;
+		return ret;
+	}
+
+	chip->debug_force_i2c_err = false;
+	chip->debug_force_rx_err = TRACK_WLS_TRX_ERR_DEFAULT;
+	chip->debug_force_tx_err = TRACK_WLS_TRX_ERR_DEFAULT;
+	chip->debug_force_update_err = TRACK_WLS_TRX_ERR_DEFAULT;
+	chip->debug_force_upload_period = 0;
+	debugfs_create_u32("debug_force_i2c_err", 0644,
+	    debugfs_nu1619, &(chip->debug_force_i2c_err));
+	debugfs_create_u32("debug_force_rx_err", 0644,
+	    debugfs_nu1619, &(chip->debug_force_rx_err));
+	debugfs_create_u32("debug_force_tx_err", 0644,
+	    debugfs_nu1619, &(chip->debug_force_tx_err));
+	debugfs_create_u32("debug_force_update_err", 0644,
+	    debugfs_nu1619, &(chip->debug_force_update_err));
+	debugfs_create_u32("debug_force_upload_period", 0644,
+	    debugfs_nu1619, &(chip->debug_force_upload_period));
+
+	return ret;
+}
+
+static int nu1619_track_init(struct oplus_nu1619 *chip)
+{
+	int rc;
+
+	if (!chip)
+		return - EINVAL;
+
+	mutex_init(&chip->track_i2c_err_lock);
+	mutex_init(&chip->track_rx_err_lock);
+	mutex_init(&chip->track_tx_err_lock);
+	mutex_init(&chip->track_update_err_lock);
+	mutex_init(&chip->track_upload_lock);
+	chip->i2c_err_uploading = false;
+	chip->i2c_err_load_trigger = NULL;
+	chip->rx_err_uploading = false;
+	chip->rx_err_load_trigger = NULL;
+	chip->tx_err_uploading = false;
+	chip->tx_err_load_trigger = NULL;
+	chip->update_err_uploading = false;
+	chip->update_err_load_trigger = NULL;
+
+	INIT_DELAYED_WORK(&chip->i2c_err_load_trigger_work,
+				nu1619_track_i2c_err_load_trigger_work);
+	INIT_DELAYED_WORK(&chip->rx_err_load_trigger_work,
+				nu1619_track_rx_err_load_trigger_work);
+	INIT_DELAYED_WORK(&chip->tx_err_load_trigger_work,
+				nu1619_track_tx_err_load_trigger_work);
+	INIT_DELAYED_WORK(&chip->update_err_load_trigger_work,
+				nu1619_track_update_err_load_trigger_work);
+	rc = nu1619_track_debugfs_init(chip);
+	if (rc < 0) {
+		pr_err("nu1619 debugfs init error, rc=%d\n", rc);
+	}
+
+	return rc;
 }
 
 static int nu1619_set_trx_boost_enable(struct oplus_nu1619 *chip, bool en)
@@ -745,8 +1296,10 @@ static int nu1619_get_power_cap(struct oplus_nu1619 *chip)
 	if (temp[0] == (NU1619_REG_TX_PWR_CAP ^ 0x80)) {
 		val_buf[0] = temp[1];
 	}
-	if (val_buf[0] >= NU1619_RX_PWR_15W) {
+	if (!chip->support_epp_11w && val_buf[0] >= NU1619_RX_PWR_15W) {
 		chip->rx_pwr_cap = NU1619_RX_PWR_15W;
+	} else if (chip->support_epp_11w && val_buf[0] >= NU1619_RX_PWR_11W) {
+		chip->rx_pwr_cap = NU1619_RX_PWR_11W;
 	} else if (val_buf[0] < NU1619_RX_PWR_10W && val_buf[0] != 0) {
 		/*treat <10W as 5W*/
 		chip->rx_pwr_cap = NU1619_RX_PWR_5W;
@@ -814,7 +1367,8 @@ static int nu1619_get_rx_mode(struct oplus_chg_ic_dev *dev, enum oplus_chg_wls_r
 	chip->adapter_type = nu1619_get_running_mode(chip);
 	chip->rx_pwr_cap = nu1619_get_power_cap(chip);
 	if (chip->adapter_type == NU1619_RX_MODE_EPP) {
-		if (chip->rx_pwr_cap == NU1619_RX_PWR_15W)
+		if (chip->rx_pwr_cap == NU1619_RX_PWR_15W ||
+		    chip->rx_pwr_cap == NU1619_RX_PWR_11W)
 			*rx_mode = OPLUS_CHG_WLS_RX_MODE_EPP_PLUS;
 		else if (chip->rx_pwr_cap == NU1619_RX_PWR_5W)
 			*rx_mode = OPLUS_CHG_WLS_RX_MODE_EPP_5W;
@@ -1691,6 +2245,8 @@ static bool nu1619_onekey_download_firmware(struct oplus_nu1619 *chip)
 
 	if (!nu1619_check_i2c_is_ok(chip)) {
 		pr_err("<FW UPDATE> i2c error!\n");
+		nu1619_track_upload_wls_update_err_info(
+			chip, TRACK_WLS_UPDATE_ERR_I2C);
 		return false;
 	} else {
 		pr_err("<FW UPDATE> i2c success!\n");
@@ -1712,6 +2268,8 @@ static bool nu1619_onekey_download_firmware(struct oplus_nu1619 *chip)
 	status = nu1619_download_firmware(chip);
 	if (!status) {
 		pr_err("<FW UPDATE> nu1619_download_firmware fail!!!\n");
+		nu1619_track_upload_wls_update_err_info(
+			chip, TRACK_WLS_UPDATE_ERR_OTHER);
 		return false;
 	}
 
@@ -1725,6 +2283,8 @@ static bool nu1619_onekey_download_firmware(struct oplus_nu1619 *chip)
 	status = nu1619_check_firmware(chip);
 	if (!status) {
 		pr_err("<FW UPDATE> nu1619_check_firmware fail!!!\n");
+		nu1619_track_upload_wls_update_err_info(
+			chip, TRACK_WLS_UPDATE_ERR_CRC);
 		return false;
 	}
 	pr_err("<FW UPDATE> end\n");
@@ -1879,8 +2439,11 @@ static bool nu1619_upgrade_firmware(struct oplus_nu1619 *chip, u8 *fw_buf, int f
 
 	pr_err("<FW UPDATE> enter\n");
 
-	if (!nu1619_check_i2c_is_ok(chip)) {
+	if (!nu1619_check_i2c_is_ok(chip) ||
+	    chip->debug_force_update_err == TRACK_WLS_UPDATE_ERR_I2C) {
 		pr_err("<FW UPDATE> i2c error!\n");
+		nu1619_track_upload_wls_update_err_info(
+			chip, TRACK_WLS_UPDATE_ERR_I2C);
 		return false;
 	} else {
 		pr_err("<FW UPDATE> i2c success!\n");
@@ -2036,7 +2599,7 @@ CCC:
 		return false;
 	/************exit dtm end************/
 
-	pr_err("<FW UPDATE> error_count=%d, pass_count=%d, chip->fw_rx_length=%ld\n",
+	pr_err("<FW UPDATE> error_count=%d, pass_count=%d, chip->fw_rx_length=%d\n",
 		j, pass_count, chip->fw_rx_length);
 
 	pr_err("<FW UPDATE> fw_data version=0x%x, 0x%x, 0x%x, 0x%x\n",
@@ -2124,8 +2687,41 @@ static void nu1619_clear_irq(struct oplus_nu1619 *chip)
 	return;
 }
 
+static void nu1619_increase_trx_boost_vol(struct oplus_nu1619 *chip)
+{
+	int i;
+	int j;
+	int value;
+	int rc;
+
+	if (chip == NULL) {
+		pr_err("oplus_nu1619 is NULL\n");
+		return;
+	}
+
+	for (i = 1; i < NU1619_TRX_VOL_MAX_MV / NU1619_TRX_VOL_STEP_MV; i++) {
+		value = NU1619_TRX_VOL_START_MV + i * NU1619_TRX_VOL_STEP_MV;
+		if (value > NU1619_TRX_VOL_MAX_MV)
+			break;
+		for (j = 0; j < NU1619_WAIT_INC_DELAY_MS / NU1619_WAIT_INC_STEP_MS; j++) {
+			msleep(NU1619_WAIT_INC_STEP_MS);
+			if (nu1619_is_in_tx_mode(chip) == false)
+				goto end;
+		}
+		rc = nu1619_set_trx_boost_vol(chip, value);
+		if (rc < 0) {
+			pr_err("set trx boost vol(=%d), rc=%d\n", value, rc);
+			return;
+		}
+	}
+end:
+	return;
+}
+
 static void nu1619_tx_event_config(struct oplus_nu1619 *chip, int status, int err)
 {
+	int tx_err = TRACK_WLS_TRX_ERR_DEFAULT;
+
 	if (chip == NULL) {
 		pr_err("oplus_nu1619 is NULL\n");
 		return;
@@ -2135,27 +2731,34 @@ static void nu1619_tx_event_config(struct oplus_nu1619 *chip, int status, int er
 		switch (err) {
 		case NU1619_TX_ERR_RXAC:
 			chip->tx_status = TX_STATUS_ERR_RXAC;
+			tx_err = TRACK_WLS_TRX_ERR_RXAC;
 			break;
 		case NU1619_TX_ERR_OCP:
 			chip->tx_status = TX_STATUS_ERR_OCP;
+			tx_err = TRACK_WLS_TRX_ERR_OCP;
 			break;
 		case NU1619_TX_ERR_OVP:
 			chip->tx_status = TX_STATUS_ERR_OVP;
+			tx_err = TRACK_WLS_TRX_ERR_OVP;
 			break;
 		case NU1619_TX_ERR_LVP:
 			chip->tx_status = TX_STATUS_ERR_LVP;
+			tx_err = TRACK_WLS_TRX_ERR_LVP;
 			break;
 		case NU1619_TX_ERR_FOD:
 			chip->tx_status = TX_STATUS_ERR_FOD;
+			tx_err = TRACK_WLS_TRX_ERR_FOD;
 			break;
 		case NU1619_TX_ERR_OTP:
 			chip->tx_status = TX_STATUS_ERR_OTP;
+			tx_err = TRACK_WLS_TRX_ERR_OTP;
 			break;
 		case NU1619_TX_ERR_CEPTIMEOUT:
 			chip->tx_status = TX_STATUS_ERR_CEPTIMEOUT;
 			break;
 		case NU1619_TX_ERR_RXEPT:
 			chip->tx_status = TX_STATUS_ERR_RXEPT;
+			tx_err = TRACK_WLS_TRX_ERR_RXEPT;
 			break;
 		default:
 			break;
@@ -2176,6 +2779,11 @@ static void nu1619_tx_event_config(struct oplus_nu1619 *chip, int status, int er
 			break;
 		}
 	}
+
+	if (chip->debug_force_tx_err)
+		tx_err = chip->debug_force_tx_err;
+	if (tx_err != TRACK_WLS_TRX_ERR_DEFAULT)
+		nu1619_track_upload_wls_tx_err_info(chip, tx_err);
 	return;
 }
 
@@ -2186,6 +2794,7 @@ static void nu1619_event_process(struct oplus_nu1619 *chip)
 	char val_buf[6] = {0, 0, 0, 0, 0, 0};
 	int retry_counts = 0;
 	union oplus_chg_mod_propval temp_val = {0, };
+	int rx_err = TRACK_WLS_TRX_ERR_DEFAULT;
 
 	if (chip == NULL) {
 		pr_err("oplus_nu1619 is NULL\n");
@@ -2207,6 +2816,13 @@ static void nu1619_event_process(struct oplus_nu1619 *chip)
 	}
 
 	if (nu1619_is_in_tx_mode(chip) == true) {
+		if (temp[0] == NU1619_TX_INCREASE_BOOST_VOL) {
+			pr_err("increase tx vol!\n");
+			nu1619_increase_trx_boost_vol(chip);
+		} else if (temp[0] == NU1619_TX_DECREASE_BOOST_VOL) {
+			pr_err("decrease tx vol!\n");
+			nu1619_set_trx_boost_vol(chip, NU1619_TRX_VOL_START_MV);
+		}
 		nu1619_tx_event_config(chip, temp[0], temp[1]);
 		if (is_wls_ocm_available(chip))
 			oplus_chg_anon_mod_event(chip->wls_ocm, OPLUS_CHG_EVENT_CHECK_TRX);
@@ -2227,14 +2843,19 @@ static void nu1619_event_process(struct oplus_nu1619 *chip)
 	}
 
 	if (chip->rx_connected == true) {
-		if (temp[0] & NU1619_RX_ERR_OCP)
+		if (temp[0] & NU1619_RX_ERR_OCP) {
+			rx_err = TRACK_WLS_TRX_ERR_OCP;
 			pr_err("rx OCP happen!\n");
-		if (temp[0] & NU1619_RX_ERR_OVP)
+		} else if (temp[0] & NU1619_RX_ERR_OVP) {
+			rx_err = TRACK_WLS_TRX_ERR_OVP;
 			pr_err("rx OVP happen!\n");
-		if (temp[0] & NU1619_RX_ERR_OTP)
+		} else if (temp[0] & NU1619_RX_ERR_OTP) {
+			rx_err = TRACK_WLS_TRX_ERR_OTP;
 			pr_err("rx OTP happen!\n");
-		if (temp[0] & NU1619_VOUT_ERR)
+		} else if (temp[0] & NU1619_VOUT_ERR) {
+			rx_err = TRACK_WLS_TRX_ERR_VOUT;
 			pr_err("rx VOUT_ERR happen!\n");
+		}
 		if (temp[1] & NU1619_RX_ERR_UV_ALARM) {
 			if (is_wls_ocm_available(chip)) {
 				pr_err("rx UVP happen!\n");
@@ -2247,8 +2868,13 @@ static void nu1619_event_process(struct oplus_nu1619 *chip)
 				pr_err("rx UVP clear!\n");
 				temp_val.intval = false;
 				oplus_chg_mod_set_property(chip->wls_ocm, OPLUS_CHG_PROP_RX_VOUT_UVP, &temp_val);
-                        }
+			}
 		}
+
+		if (chip->debug_force_rx_err)
+			rx_err = chip->debug_force_rx_err;
+		if (rx_err != TRACK_WLS_TRX_ERR_DEFAULT)
+			nu1619_track_upload_wls_rx_err_info(chip, rx_err);
 	}
 
 	if (temp[1] & 0x01) {
@@ -2686,6 +3312,8 @@ static int nu1619_driver_probe(struct i2c_client *client,
 	chip->client = client;
 	i2c_set_clientdata(client, chip);
 
+	chip->support_epp_11w = of_property_read_bool(node, "oplus,support_epp_11w");
+
 	rc = of_property_read_u32(node, "oplus,ic_type", &ic_type);
 	if (rc < 0) {
 		pr_err("can't get ic type, rc=%d\n", rc);
@@ -2736,6 +3364,7 @@ static int nu1619_driver_probe(struct i2c_client *client,
 	}
 
 	nu1619_set_chip_info(chip->ic_dev);
+	nu1619_track_init(chip);
 
 	device_init_wakeup(chip->dev, true);
 

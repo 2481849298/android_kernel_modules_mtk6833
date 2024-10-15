@@ -25,3 +25,7 @@ config UFF_FINGERPRINT_ENABLE_TEE_BINDERCORE
 config UFF_FINGERPRINT_REE_SPI
        default n
        tristate "Fingerprint ree spi"
+
+config FP_SUPPLY_MODE_LDO
+       default n
+       bool "Fingerprint supply base on pmic's ldo"

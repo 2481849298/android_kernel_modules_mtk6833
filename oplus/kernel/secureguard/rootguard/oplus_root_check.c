@@ -26,7 +26,7 @@
 #include <linux/oplus_kevent.h>
 #ifdef CONFIG_OPLUS_KEVENT_UPLOAD
 
-void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum)
+bool oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum)
 {
 	struct kernel_packet_info *dcs_event;
 	char dcs_stack[sizeof(struct kernel_packet_info) + 256];
@@ -38,6 +38,18 @@ void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum)
 	char comm[TASK_COMM_LEN], nameofppid[TASK_COMM_LEN];//
 	struct task_struct * parent_task = NULL;
 	int ppid = -1;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
+#if defined(WHITE_LIST_SUPPORT)
+	memset(nameofppid, 0, TASK_COMM_LEN);
+	parent_task = rcu_dereference(current->real_parent);
+	if (parent_task) {
+		get_task_comm(nameofppid, parent_task);
+	}
+	if (!strncmp(nameofppid, "dumpstate", 9)) {
+		return 1;
+	}
+#endif /* WHITE_LIST_SUPPORT */
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0) */
 
 	memset(comm, 0, TASK_COMM_LEN);
 	memset(nameofppid, 0, TASK_COMM_LEN);
@@ -54,7 +66,7 @@ void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum)
 	strncpy(dcs_event->event_id, dcs_event_id, sizeof(dcs_event->event_id));
 	dcs_event_payload = kmalloc(256, GFP_ATOMIC);
 	if (NULL == dcs_event_payload){
-		return;
+		return 0;
 	}
 	memset(dcs_event_payload, 0, 256);
 
@@ -74,7 +86,7 @@ void oplus_root_check_succ(uid_t uid, uid_t euid, uid_t fsuid, uid_t callnum)
 
 	kfree(dcs_event_payload);
 
-	return;
+	return 0;
 }
 
 #endif

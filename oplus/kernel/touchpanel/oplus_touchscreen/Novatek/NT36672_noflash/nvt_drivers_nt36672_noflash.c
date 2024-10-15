@@ -531,18 +531,17 @@ static int32_t nvt_bin_header_parser(struct chip_data_nt36672 *chip_info, const 
         ovly_sec_num = (ovly_info) ? (fwdata[0x28] & 0x0F) : 0;
 
         /*
-         * calculate all partition number
-         * ilm_dlm_num (ILM & DLM) + ovly_sec_num + info_sec_num
-         */
+		* calculate all partition number
+		* ilm_dlm_num (ILM & DLM) + ovly_sec_num + info_sec_num
+		*/
         chip_info->partition = chip_info->ilm_dlm_num + ovly_sec_num + info_sec_num;
         TPD_DETAIL("ovly_info = %d, ilm_dlm_num = %d, ovly_sec_num = %d, info_sec_num = %d, partition = %d\n",
-                        ovly_info, chip_info->ilm_dlm_num, ovly_sec_num, info_sec_num, chip_info->partition);
-
-        /* allocated memory for header info */
+					ovly_info, chip_info->ilm_dlm_num, ovly_sec_num, info_sec_num, chip_info->partition);
+		/* allocated memory for header info */
         chip_info->bin_map = (struct nvt_ts_bin_map *)kzalloc((chip_info->partition+1) * sizeof(struct nvt_ts_bin_map), GFP_KERNEL);
         if(chip_info->bin_map == NULL) {
-                TPD_INFO("kzalloc for bin_map failed!\n");
-                return -ENOMEM;
+			TPD_INFO("kzalloc for bin_map failed!\n");
+			return -ENOMEM;
         }
 
         for (list = 0; list < chip_info->partition; list++) {

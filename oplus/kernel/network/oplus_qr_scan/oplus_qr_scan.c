@@ -1,6 +1,6 @@
 /************************************************************************************
 ** File: - oplus_qr.c
-** Copyright (C), 2008-2020, OPPO Mobile Comm Corp., Ltd
+** Copyright (C), 2008-2020, OPLUS Mobile Comm Corp., Ltd
 **
 ** Description:
 **          1. Add for QR scan
@@ -169,8 +169,6 @@ static int oplus_qr_hooks_send_to_user(int msg_type, char *payload, int payload_
 		printk(KERN_ERR "oplus_qr_monitor: qr_monitor_netlink_send_to_user, can not unicast skbuff, ret = %d,android_pid pid=%d\n", ret, oplus_qr_netlink_pid);
 		return -1;
 	}
-
-	printk(" qr_monitor_netlink_send_to_user, skb_len=%u,android_pid pid=%d", skbuff->len, oplus_qr_netlink_pid);
 
 	return 0;
 }

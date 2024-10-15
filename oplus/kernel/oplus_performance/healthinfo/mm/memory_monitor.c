@@ -14,6 +14,8 @@
 #include <asm/uaccess.h>
 #include <../../mm/internal.h>
 #include  <linux/healthinfo/memory_monitor.h>
+#include <linux/time64.h>
+#include <linux/timekeeping.h>
 
 #ifdef CONFIG_OPLUS_HEALTHINFO
 struct alloc_wait_para allocwait_para = {
@@ -80,17 +82,24 @@ static int alloc_wait_h_ms = 500;
 static int alloc_wait_l_ms = 100;
 static int alloc_wait_log_ms = 1000;
 static int alloc_wait_trig_ms = 10000;
+/* 2 jiffies for HZ=250 */
+static int alloc_wait_detail_ms = 5;
 
 static int ion_wait_h_ms = 500;
 static int ion_wait_l_ms = 100;
 static int ion_wait_log_ms = 1000;
 static int ion_wait_trig_ms = 10000;
+/* 2 jiffies for HZ=250 */
+static int ion_wait_detail_ms = 5;
 
 #ifdef OPLUS_FEATURE_SCHED_ASSIST
 extern bool test_task_ux(struct task_struct *task);
 #endif
 void memory_alloc_monitor(gfp_t gfp_mask, unsigned int order, u64 wait_ms)
 {
+	struct long_wait_record *plwr;
+	struct timespec64 ts;
+	u32 index;
 	int fg = 0;
 	int ux = 0;
 	if (unlikely(!ohm_memmon_ctrl))
@@ -142,10 +151,25 @@ void memory_alloc_monitor(gfp_t gfp_mask, unsigned int order, u64 wait_ms)
 	} else if (wait_ms >= alloc_wait_l_ms) {
 		allocwait_para.total_alloc_wait.low_cnt++;
 	}
+
+	if (unlikely(wait_ms >= alloc_wait_detail_ms) && ux) {
+		index = (u32)atomic_inc_return(&allocwait_para.lwr_index);
+		plwr = &allocwait_para.last_n_lwr[index & LWR_MASK];
+		plwr->pid = (u32)current->pid;
+		plwr->priv = order;
+
+		ktime_get_real_ts64(&ts);
+		plwr->timestamp = (u64)ts.tv_sec;
+
+		plwr->ms = wait_ms;
+	}
 }
 
 void ionwait_monitor(u64 wait_ms)
 {
+	struct long_wait_record *plwr;
+	struct timespec64 ts;
+	u32 index;
 	int fg = 0;
 	int ux = 0;
 	if (unlikely(!ohm_ionmon_ctrl))
@@ -183,6 +207,17 @@ void ionwait_monitor(u64 wait_ms)
 		}
 	} else if (wait_ms >= ion_wait_l_ms) {
 		ionwait_para.total_ion_wait.low_cnt++;
+	}
+
+	if (unlikely(wait_ms >= ion_wait_detail_ms) && ux) {
+		index = (u32)atomic_inc_return(&ionwait_para.lwr_index);
+		plwr = &ionwait_para.last_n_lwr[index & LWR_MASK];
+		plwr->pid = (u32)current->pid;
+
+		ktime_get_real_ts64(&ts);
+		plwr->timestamp = (u64)ts.tv_sec;
+
+		plwr->ms = wait_ms;
 	}
 }
 

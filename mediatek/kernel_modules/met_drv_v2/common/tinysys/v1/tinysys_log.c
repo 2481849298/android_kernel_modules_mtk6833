@@ -168,13 +168,17 @@ int tinysys_log_manager_start(void)
 int tinysys_log_manager_stop(void)
 {
 #if FEATURE_SSPM_NUM
-	sspm_log_stop();
-	_reset(kTINYSYS_LOG_STOP, ONDIEMET_SSPM);
+	if (!ondiemet_record_check[ONDIEMET_SSPM]) {
+		sspm_log_stop();
+		_reset(kTINYSYS_LOG_STOP, ONDIEMET_SSPM);
+	}
 #endif
 
 #if FEATURE_MCUPM_NUM
-	mcupm_log_stop();
-	_reset(kTINYSYS_LOG_STOP, ONDIEMET_MCUPM);
+	if (!ondiemet_record_check[ONDIEMET_MCUPM]) {
+		mcupm_log_stop();
+		_reset(kTINYSYS_LOG_STOP, ONDIEMET_MCUPM);
+	}
 #endif
 
 	return 0;

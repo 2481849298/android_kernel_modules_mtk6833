@@ -98,6 +98,7 @@
 #endif
 
 #include "../../touchpanel_common.h"
+#include "../../touchpanel_healthinfo.h"
 #include <soc/oplus/system/oplus_project.h>
 
 #define DRIVER_VERSION                  "3.0.4.0.210906"

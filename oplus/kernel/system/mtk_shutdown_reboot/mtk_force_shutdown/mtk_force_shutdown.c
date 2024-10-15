@@ -38,12 +38,11 @@ static int mtk_pmic_custommade_enable = 1;
 static void psci_sys_reset(void)
 {
 	struct arm_smccc_res res;
-
+  
 	arm_smccc_smc(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0, 0, 0, 0, 0, &res);
 }
 
-static ssize_t mtk_pmic_custommade_write(struct file *file,
-		const char __user *buf, size_t size, loff_t *ppos)
+static ssize_t mtk_pmic_custommade_write(struct file *file, const char __user *buf, size_t size, loff_t *ppos)
 {
 	int ret = 0;
 	char buffer[4] = {0};
@@ -55,9 +54,9 @@ static ssize_t mtk_pmic_custommade_write(struct file *file,
 	}
 
 	if (copy_from_user(buffer, buf, size)) {
-		pr_err("%s: read proc input error.\n", __func__);
-		return size;
-	}
+        pr_err("%s: read proc input error.\n", __func__);
+        return size;
+    }
 
 	if (size != 0) {
 		pr_info("[%s] buffer is %s, size is %d\n", __func__, buffer, (int)size);
@@ -68,33 +67,27 @@ static ssize_t mtk_pmic_custommade_write(struct file *file,
 			return size;
 		}
 
-		switch (value) {
-		case DISABLE_PMIC_CTRL_FUNCTION:
-			pr_info("mtk_pmic_custommade_enable set 0\n");
-			mtk_pmic_custommade_enable = 0;
-			break;
-
-		case ENABLE_PMIC_CTRL_FUNCTION:
-			pr_info("mtk_pmic_custommade_enable set 1\n");
-			mtk_pmic_custommade_enable = 1;
-			break;
-
-		case TRIGGER_PM_POWEROFF:
-			pr_info("trigger machine_power_off");
-
-			if (pm_power_off) {
-				pm_power_off();
-			}
-
-			break;
-
-		case TRIGGER_HARD_RESET:
-			psci_sys_reset();
-			break;
-
-		default:
-			pr_info("not support\n");
-			break;
+		switch(value) {
+			case DISABLE_PMIC_CTRL_FUNCTION:
+				pr_info("mtk_pmic_custommade_enable set 0\n");
+				mtk_pmic_custommade_enable = 0;
+				break;
+			case ENABLE_PMIC_CTRL_FUNCTION:
+				pr_info("mtk_pmic_custommade_enable set 1\n");
+				mtk_pmic_custommade_enable = 1;
+				break;
+			case TRIGGER_PM_POWEROFF:
+				pr_info("trigger machine_power_off");
+				if (pm_power_off) {
+					pm_power_off();
+				}
+				break;
+			case TRIGGER_HARD_RESET:
+				psci_sys_reset();
+				break;
+			default:
+        		pr_info("not support\n");
+        		break;
 		}
 	}
 
@@ -108,47 +101,43 @@ static int mtk_pmic_custommade_read_func(struct seq_file *s, void *v)
 	seq_printf(s, "%d: ENABLE_PMIC_CTRL_FUNCTION\n", ENABLE_PMIC_CTRL_FUNCTION);
 	seq_printf(s, "%d: TRIGGER_PM_POWEROFF\n", TRIGGER_PM_POWEROFF);
 	seq_printf(s, "%d: TRIGGER_HARD_RESET\n", TRIGGER_HARD_RESET);
-	seq_printf(s, "\nmtk_pmic_custommade_enable : %d\n",
-		   mtk_pmic_custommade_enable);
+	seq_printf(s, "\nmtk_pmic_custommade_enable : %d\n", mtk_pmic_custommade_enable);
 
-	return 0;
+    return 0;
 }
 
 static int mtk_pmic_custommade_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, mtk_pmic_custommade_read_func, PDE_DATA(inode));
+    return single_open(file, mtk_pmic_custommade_read_func, PDE_DATA(inode));
 }
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 static const struct file_operations mtk_pmic_custommade_fops = {
-	.open  = mtk_pmic_custommade_open,
-	.read  = seq_read,
-	.write = mtk_pmic_custommade_write,
-	.release = single_release,
+    .open  = mtk_pmic_custommade_open,
+    .read  = seq_read,
+    .write = mtk_pmic_custommade_write,
+    .release = single_release,
 };
 #else
 static const struct proc_ops mtk_pmic_custommade_fops = {
-	.proc_open  = mtk_pmic_custommade_open,
-	.proc_read  = seq_read,
-	.proc_write = mtk_pmic_custommade_write,
-	.proc_release = single_release,
+    .proc_open  = mtk_pmic_custommade_open,
+    .proc_read  = seq_read,
+    .proc_write = mtk_pmic_custommade_write,
+    .proc_release = single_release,
 };
 #endif
 
 static int __init mtk_pmic_custommade_init(void)
 {
-	struct proc_dir_entry *p_entry;
+    struct proc_dir_entry *p_entry;
 
-	p_entry = proc_create_data("mtk_pmic_shutdown", S_IRUGO, NULL,
-				   &mtk_pmic_custommade_fops, NULL);
+    p_entry = proc_create_data("mtk_pmic_shutdown", S_IRUGO, NULL, &mtk_pmic_custommade_fops, NULL);
+    if (!p_entry)
+        goto error_init;
 
-	if (!p_entry) {
-		goto error_init;
-	}
-
-	return 0;
+    return 0;
 
 error_init:
-	return -ENOENT;
+    return -ENOENT;
 }
 
 late_initcall(mtk_pmic_custommade_init);

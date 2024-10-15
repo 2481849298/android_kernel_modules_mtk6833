@@ -19,6 +19,8 @@ oplus_phoenix-y := gki/op_bootprof.o gki/phoenix_base.o gki/phoenix_dump.o gki/p
 endif
 endif
 
+obj-$(CONFIG_OPLUS_FEATURE_KMSG_WB) += oplus_kmsg_wb.o
+
 #ifdef OPLUS_BUG_STABILITY
 ifeq ($(MTK_PLATFORM),mt6779)
 ###ODEX time out for first time,extend time

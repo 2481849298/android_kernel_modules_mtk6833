@@ -20,7 +20,11 @@
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 #include <linux/xlog.h>
 #include <mt-plat/mtk_rtc.h>
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
 #include <mt-plat/charger_type.h>
+#else
+#include <mt-plat/v1/charger_type.h>
+#endif
 #include <soc/oplus/device_info.h>
 #endif
 #include <linux/gpio.h>
@@ -679,7 +683,7 @@ static int charge_pump_read_func(struct seq_file *s, void *v)
 
 static ssize_t proc_charge_pump_reg_write(struct file *file, const char __user *buf, size_t count, loff_t *lo)
 {
-    char buffer[10] = {0};
+    char buffer[11] = {0};
     int addr = 0;
     int val = 0;
     struct chip_charge_pump *divider_ic = PDE_DATA(file_inode(file));
@@ -699,7 +703,7 @@ static ssize_t proc_charge_pump_reg_write(struct file *file, const char __user *
     }
 
     if (!sscanf(buffer, "0x%x:0x%x", &addr, &val)) {
-        chg_err("invalid content: '%s', length = %zd\n", buf, count);
+        chg_err("invalid content: '%s', length = %u\n", buffer, count);
         return -EFAULT;
     }
     chg_err("addr:0x%02x, val:0x%02x.\n", addr, val);
@@ -736,12 +740,14 @@ static const struct proc_ops proc_work_mode_ops = {
 	.proc_read  = proc_charge_pump_work_mode_read,
 	.proc_write = proc_charge_pump_work_mode_write,
 	.proc_open  = simple_open,
+	.proc_lseek = seq_lseek,
 };
 
 static const struct proc_ops proc_register_ops = {
 	.proc_read  = seq_read,
 	.proc_write = proc_charge_pump_reg_write,
 	.proc_open  = proc_charge_pump_open,
+	.proc_lseek = seq_lseek,
 };
 #endif
 

@@ -539,6 +539,7 @@ struct smb_charger {
 	bool hvdcp_detect_ok;
 	struct delayed_work hvdcp_disable_work;
 	struct delayed_work regist_pd;
+	int real_chg_type;
 #endif
 
 	/* pd */

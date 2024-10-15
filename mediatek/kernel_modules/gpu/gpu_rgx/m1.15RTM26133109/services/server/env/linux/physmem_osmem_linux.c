@@ -335,6 +335,8 @@ static DEFINE_MUTEX(g_sUMALeakMutex);
 static IMG_UINT32 g_ui32UMALeakCounter = 0;
 #endif
 
+static IMG_BOOL g_bInitOnAlloc = IMG_FALSE;
+
 static inline IMG_UINT32
 _PagesInPoolUnlocked(void)
 {
@@ -599,6 +601,16 @@ static struct shrinker g_sShrinker =
 	.seeks = DEFAULT_SEEKS
 };
 #endif
+
+void LinuxInitCheckInitOnAlloc(void)
+{
+	if(IS_ENABLED(CONFIG_INIT_ON_ALLOC_DEFAULT_ON))
+	{
+		g_bInitOnAlloc = IMG_TRUE;
+	}
+	else
+		g_bInitOnAlloc = IMG_FALSE;
+}
 
 /* Register the shrinker so Linux can reclaim cached pages */
 void LinuxInitPhysmem(void)
@@ -2045,7 +2057,9 @@ _AllocOSPages_Fast(PMR_OSPAGEARRAY_DATA *psPageArrayData)
 		}
 	}
 
-	if (BIT_ISSET(psPageArrayData->ui32AllocFlags, FLAG_ZERO) && ui32MinOrder == 0)
+	if (BIT_ISSET(psPageArrayData->ui32AllocFlags, FLAG_ZERO) &&
+	    g_bInitOnAlloc == IMG_FALSE &&
+	    ui32MinOrder == 0)
 	{
 		eError = _ZeroPageArray(uiPagesToAlloc - uiPagesFromPool,
 					   ppsPageAttributeArray,
@@ -2336,7 +2350,9 @@ _AllocOSPages_Sparse(PMR_OSPAGEARRAY_DATA *psPageArrayData,
 		}
 	}
 
-	if (BIT_ISSET(psPageArrayData->ui32AllocFlags, FLAG_ZERO) && uiOrder == 0)
+	if (BIT_ISSET(psPageArrayData->ui32AllocFlags, FLAG_ZERO) &&
+	    g_bInitOnAlloc == IMG_FALSE &&
+	    uiOrder == 0)
 	{
 		eError = _ZeroPageArray(uiTempPageArrayIndex,
 		                        ppsTempPageArray,
@@ -3002,6 +3018,13 @@ PMRUnlockSysPhysAddressesOSMem(PMR_IMPL_PRIVDATA pvPriv)
 	return eError;
 }
 
+static INLINE IMG_BOOL IsOffsetValid(const PMR_OSPAGEARRAY_DATA *psOSPageArrayData,
+                                     IMG_UINT32 ui32Offset)
+{
+	return (ui32Offset >> psOSPageArrayData->uiLog2AllocPageSize) <
+	    psOSPageArrayData->uiTotalNumOSPages;
+}
+
 /* Determine PA for specified offset into page array. */
 static IMG_DEV_PHYADDR GetOffsetPA(const PMR_OSPAGEARRAY_DATA *psOSPageArrayData,
                                    IMG_UINT32 ui32Offset)
@@ -3011,7 +3034,6 @@ static IMG_DEV_PHYADDR GetOffsetPA(const PMR_OSPAGEARRAY_DATA *psOSPageArrayData
 	IMG_UINT32 ui32InPageOffset = ui32Offset - (ui32PageIndex << ui32Log2AllocPageSize);
 	IMG_DEV_PHYADDR sPA;
 
-	PVR_ASSERT(ui32PageIndex < psOSPageArrayData->uiTotalNumOSPages);
 	PVR_ASSERT(ui32InPageOffset < (1U << ui32Log2AllocPageSize));
 
 	sPA.uiAddr = page_to_phys(psOSPageArrayData->pagearray[ui32PageIndex]);
@@ -3046,6 +3068,9 @@ PMRSysPhysAddrOSMem(PMR_IMPL_PRIVDATA pvPriv,
 	{
 		if (pbValid[uiIdx])
 		{
+			PVR_LOG_RETURN_IF_FALSE(IsOffsetValid(psOSPageArrayData, puiOffset[uiIdx]),
+			                        "puiOffset out of range", PVRSRV_ERROR_OUT_OF_RANGE);
+
 			psDevPAddr[uiIdx] = GetOffsetPA(psOSPageArrayData, puiOffset[uiIdx]);
 
 #if !defined(PVR_LINUX_PHYSMEM_USE_HIGHMEM_ONLY)

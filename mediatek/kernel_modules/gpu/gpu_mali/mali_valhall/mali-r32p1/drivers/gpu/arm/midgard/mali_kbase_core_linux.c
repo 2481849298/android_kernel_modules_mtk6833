@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
 /*
  *
- * (C) COPYRIGHT 2010-2021 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2010-2022 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -112,7 +112,7 @@
 
 #include <mali_kbase_caps.h>
 
-#include "platform/mtk_platform_common.h"
+#include <platform/mtk_platform_common.h>
 #include <mtk_gpufreq.h>
 
 #if defined(CONFIG_MALI_MTK_GPU_BM_JM)
@@ -127,6 +127,10 @@ struct v1_data *gpu_info_ref;
 
 #if defined(CONFIG_MALI_MTK_GPU_BM_CSF)
 #include <ged_gpu_bm.h>
+#endif
+
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+#include <platform/mtk_platform_common/mtk_platform_debug.h>
 #endif
 
 /* GPU IRQ Tags */
@@ -1491,6 +1495,9 @@ static int kbasep_kcpu_queue_enqueue(struct kbase_context *kctx,
 static int kbasep_cs_tiler_heap_init(struct kbase_context *kctx,
 		union kbase_ioctl_cs_tiler_heap_init *heap_init)
 {
+	if (heap_init->in.group_id >= MEMORY_GROUP_MANAGER_NR_GROUPS)
+		return -EINVAL;
+
 	kctx->jit_group_id = heap_init->in.group_id;
 
 	return kbase_csf_tiler_heap_init(kctx, heap_init->in.chunk_size,
@@ -1676,22 +1683,52 @@ static int kbasep_ioctl_set_limited_core_count(struct kbase_context *kctx,
 static int kbasep_ioctl_local_fence_wait(struct kbase_context *kctx,
 			struct kbase_ioctl_local_fence_wait *fence_wait)
 {
-	dev_info(kctx->kbdev->dev, "@%s: fence wait timeouts! pid=%u flags=0x%x time=%u(ms)",
-	         __func__, fence_wait->pid, fence_wait->flags,
-	         (unsigned int)fence_wait->time_in_microseconds);
+	dev_info(kctx->kbdev->dev, "internal fence wait timeouts(%llu ms)! flags=0x%x pid=%u",
+	         fence_wait->time_in_microseconds,
+	         fence_wait->flags,
+	         fence_wait->pid);
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
-	ged_log_buf_print2(kctx->kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
-		 "%s: fence wait timeouts! pid=%u flags=0x%x time=%u(ms)\n",
-		 __func__, fence_wait->pid, fence_wait->flags,
-		 (unsigned int)fence_wait->time_in_microseconds);
+	ged_log_buf_print2(
+		kctx->kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+		"internal fence wait timeouts(%llu ms)! flags=0x%x pid=%u\n",
+		fence_wait->time_in_microseconds,
+		fence_wait->flags,
+		fence_wait->pid);
 #endif
-#if MALI_USE_CSF
+
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG) && IS_ENABLED(CONFIG_MALI_MTK_FENCE_DEBUG)
 	if (fence_wait->flags & BASE_LOCAL_FENCE_DUMP_FLAG)
-		kbase_csf_local_fence_wait_dump(kctx,
-		                                (unsigned int)fence_wait->pid,
-		                                (unsigned int)fence_wait->flags,
-		                                (unsigned long)fence_wait->time_in_microseconds);
+		mtk_debug_csf_dump_groups_and_queues(kctx->kbdev, (int)fence_wait->pid);
 #endif
+
+#if IS_ENABLED(CONFIG_MALI_MTK_TIMEOUT_RESET)
+	if (fence_wait->time_in_microseconds > 3000) {
+		spin_lock(&kctx->kbdev->reset_force_change);
+		kctx->kbdev->reset_force_evict_group_work = true;
+		spin_unlock(&kctx->kbdev->reset_force_change);
+		if (kbase_prepare_to_reset_gpu(kctx->kbdev, RESET_FLAGS_NONE)) {
+			dev_info(kctx->kbdev->dev, "internal fence timeouts(%llu ms)! Trigger GPU reset",
+				     fence_wait->time_in_microseconds);
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+			ged_log_buf_print2(
+				kctx->kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+				"internal fence timeouts(%llu ms)! Trigger GPU reset\n",
+				fence_wait->time_in_microseconds);
+#endif
+			kbase_reset_gpu(kctx->kbdev);
+		} else {
+			dev_info(kctx->kbdev->dev, "internal fence timeouts(%llu ms)! Other threads are already resetting the GPU",
+				     fence_wait->time_in_microseconds);
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+			ged_log_buf_print2(
+				kctx->kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+				"internal fence timeouts(%llu ms)! Other threads are already resetting the GPU\n",
+				fence_wait->time_in_microseconds);
+#endif
+		}
+	}
+#endif
+
 	return 0;
 }
 
@@ -2100,6 +2137,9 @@ static ssize_t kbase_read(struct file *filp, char __user *buf, size_t count, lof
 	if (unlikely(!kctx))
 		return -EPERM;
 
+	if (count < data_size)
+		return -ENOBUFS;
+
 	if (atomic_read(&kctx->event_count))
 		read_event = true;
 	else
@@ -2144,6 +2184,8 @@ static ssize_t kbase_read(struct file *filp, char __user *buf, size_t count, lof
 
 	if (count < sizeof(uevent))
 		return -ENOBUFS;
+
+	memset(&uevent, 0, sizeof(uevent));
 
 	do {
 		while (kbase_event_dequeue(kctx, &uevent)) {

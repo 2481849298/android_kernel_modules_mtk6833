@@ -509,6 +509,7 @@ bool oplus_vooc_adapter_update_is_rx_gpio(unsigned long gpio_num)
 
 static void register_adapter_devinfo(void)
 {
+#ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 	int ret = 0;
 	char *version;
 	char *manufacture;
@@ -519,6 +520,7 @@ static void register_adapter_devinfo(void)
 	ret = register_device_proc("adapter", version, manufacture);
 	if (ret)
 		chg_err("register_adapter_devinfo fail\n");
+#endif
 }
 
 struct oplus_adapter_operations oplus_adapter_ops = {

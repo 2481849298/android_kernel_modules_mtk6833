@@ -22,9 +22,9 @@
 #endif
 
 #define BLACK_DEBUG_PRINTK(a, arg...)\
-        do {\
-                printk("[powerkey_monitor_black]: " a, ##arg);\
-        }while(0)
+    do{\
+         printk("[powerkey_monitor_black]: " a, ##arg);\
+    }while(0)
 
 static void black_timer_func(struct timer_list *t);
 
@@ -38,24 +38,16 @@ struct black_data g_black_data = {
 #else
 	.blank = FB_BLANK_UNBLANK,
 #endif
-	.timeout_ms = BLACK_SLOW_STATUS_TIMEOUT_MS,
-	.get_log = 1,
-	.error_count = 0,
+    .timeout_ms = BLACK_SLOW_STATUS_TIMEOUT_MS,
+    .get_log = 1,
+    .error_count = 0,
 };
 
 static int bl_start_check_systemid = -1;
 
 int black_screen_timer_restart(void)
 {
-	BLACK_DEBUG_PRINTK("black_screen_timer_restart:blank = %d,status = %d\n",
-			   g_black_data.blank, g_black_data.status);
-
-	if (g_black_data.status != BLACK_STATUS_CHECK_ENABLE
-			&& g_black_data.status != BLACK_STATUS_CHECK_DEBUG) {
-		BLACK_DEBUG_PRINTK("black_screen_timer_restart:g_black_data.status = %d return\n",
-				   g_black_data.status);
-		return g_black_data.status;
-	}
+    BLACK_DEBUG_PRINTK("black_screen_timer_restart:blank = %d,status = %d\n", g_black_data.blank, g_black_data.status);
 
     if(g_black_data.status != BLACK_STATUS_CHECK_ENABLE && g_black_data.status != BLACK_STATUS_CHECK_DEBUG){
         BLACK_DEBUG_PRINTK("black_screen_timer_restart:g_black_data.status = %d return\n",g_black_data.status);
@@ -78,137 +70,98 @@ int black_screen_timer_restart(void)
 }
 EXPORT_SYMBOL(black_screen_timer_restart);
 
-/*copy mtk_boot_common.h*/
+//copy mtk_boot_common.h
 #define NORMAL_BOOT 0
 #define ALARM_BOOT 7
 static int get_status(void)
 {
 #ifdef CONFIG_DRM_MSM
-
-	if (MSM_BOOT_MODE__NORMAL == get_boot_mode()) {
-		return g_black_data.status;
-	}
-
-	return BLACK_STATUS_INIT_SUCCEES;
+    if(MSM_BOOT_MODE__NORMAL == get_boot_mode())
+    {
+        return g_black_data.status;
+    }
+    return BLACK_STATUS_INIT_SUCCEES;
 #else
-
-	if ((get_boot_mode() == NORMAL_BOOT) || (get_boot_mode() == ALARM_BOOT)) {
-		return g_black_data.status;
-	}
-
-	return BLACK_STATUS_INIT_SUCCEES;
+    if((get_boot_mode() == NORMAL_BOOT) || (get_boot_mode() == ALARM_BOOT))
+    {
+        return g_black_data.status;
+    }
+    return BLACK_STATUS_INIT_SUCCEES;
 
 #endif
 }
 
 static bool get_log_swich()
 {
-	return (BLACK_STATUS_CHECK_ENABLE == get_status()
-		|| BLACK_STATUS_CHECK_DEBUG == get_status()) && g_black_data.get_log;
+    return  (BLACK_STATUS_CHECK_ENABLE == get_status()||BLACK_STATUS_CHECK_DEBUG == get_status())&& g_black_data.get_log;
 }
 
 /*
 logmap format:
 logmap{key1:value1;key2:value2;key3:value3 ...}
 */
-static void get_blackscreen_check_dcs_logmap(char *logmap)
+static void get_blackscreen_check_dcs_logmap(char* logmap)
 {
-	char stages[512] = {0};
-	int stages_len;
+    char stages[512] = {0};
+    int stages_len;
 
-	stages_len = get_pwkey_stages(stages);
-	snprintf(logmap, 512,
-		 "logmap{logType:%s;error_id:%s;error_count:%d;systemserver_pid:%d;stages:%s;catchlog:%s}",
-		 PWKKEY_BLACK_SCREEN_DCS_LOGTYPE,
-		 g_black_data.error_id, g_black_data.error_count, get_systemserver_pid(), stages,
-		 get_log_swich() ? "true" : "false");
-}
-
-/*if the error id contain current pid, we think is a normal resume*/
-static bool is_normal_resume()
-{
-	char current_pid_str[32];
-	sprintf(current_pid_str, "%d", get_systemserver_pid());
-
-	if (!strncmp(g_black_data.error_id, current_pid_str, strlen(current_pid_str))) {
-		return true;
-	}
-
-	return false;
-}
-
-static void get_blackscreen_resume_dcs_logmap(char *logmap)
-{
-	snprintf(logmap, 512,
-		 "logmap{logType:%s;error_id:%s;resume_count:%d;normalReborn:%s;catchlog:false}",
-		 PWKKEY_BLACK_SCREEN_DCS_LOGTYPE,
-		 g_black_data.error_id, g_black_data.error_count,
-		 (is_normal_resume() ? "true" : "false"));
+    stages_len = get_pwkey_stages(stages);
+	snprintf(logmap, 512, "logmap{logType:%s;error_id:%s;error_count:%u;systemserver_pid:%d;stages:%s;catchlog:%s}", PWKKEY_BLACK_SCREEN_DCS_LOGTYPE,
+        g_black_data.error_id, g_black_data.error_count, get_systemserver_pid(), stages, get_log_swich() ? "true" : "false");
 }
 
 void send_black_screen_dcs_msg(void)
 {
-	char logmap[512] = {0};
-	get_blackscreen_check_dcs_logmap(logmap);
-	SendDcsTheiaKevent(PWKKEY_DCS_TAG, PWKKEY_DCS_EVENTID, logmap);
+    char logmap[512] = {0};
+    get_blackscreen_check_dcs_logmap(logmap);
+
+	theia_send_event(THEIA_EVENT_BLACK_SCREEN_HANG, THEIA_LOGINFO_KERNEL_LOG | THEIA_LOGINFO_ANDROID_LOG,
+            current->pid, logmap);
 }
 
-static void send_black_screen_resume_dcs_msg(void)
+static void delete_timer(char* reason, bool cancel)
 {
-	/*check the current systemserver pid and the error_id, judge if it is a normal resume or reboot resume*/
-	char resume_logmap[512] = {0};
-	get_blackscreen_resume_dcs_logmap(resume_logmap);
-	SendDcsTheiaKevent(PWKKEY_DCS_TAG, PWKKEY_DCS_EVENTID, resume_logmap);
+    //BLACK_DEBUG_PRINTK("delete_timer reason:%s", reason);
+    del_timer(&g_black_data.timer);
+
+    if (cancel && g_black_data.error_count != 0) {
+        g_black_data.error_count = 0;
+        sprintf(g_black_data.error_id, "%s", "null");
+    }
+
+    theia_pwk_stage_end(reason);
 }
 
-static void delete_timer(char *reason, bool cancel)
+static ssize_t black_screen_cancel_proc_write(struct file *file, const char __user *buf,
+        size_t count,loff_t *off)
 {
-	/*BLACK_DEBUG_PRINTK("delete_timer reason:%s", reason);*/
-	del_timer(&g_black_data.timer);
+    char buffer[40] = {0};
+    char cancel_str[64] = {0};
 
-	if (cancel && g_black_data.error_count != 0) {
-		send_black_screen_resume_dcs_msg();
-		g_black_data.error_count = 0;
-		sprintf(g_black_data.error_id, "%s", "null");
-	}
+    if(g_black_data.status == BLACK_STATUS_INIT || g_black_data.status == BLACK_STATUS_INIT_FAIL){
+        BLACK_DEBUG_PRINTK("%s init not finish: status = %d\n", __func__, g_black_data.status);
+        return count;
+    }
 
-	theia_pwk_stage_end(reason);
-}
+    if (count >= 40) {
+       count = 39;
+    }
 
-static ssize_t black_screen_cancel_proc_write(struct file *file,
-		const char __user *buf,
-		size_t count, loff_t *off)
-{
-	char buffer[40] = {0};
-	char cancel_str[64] = {0};
-
-	if (g_black_data.status == BLACK_STATUS_INIT
-			|| g_black_data.status == BLACK_STATUS_INIT_FAIL) {
-		BLACK_DEBUG_PRINTK("%s init not finish: status = %d\n", __func__,
-				   g_black_data.status);
-		return count;
-	}
-
-	if (count >= 40) {
-		count = 39;
-	}
-
-	if (copy_from_user(buffer, buf, count)) {
-		BLACK_DEBUG_PRINTK("%s: read proc input error.\n", __func__);
-		return count;
-	}
+    if (copy_from_user(buffer, buf, count)) {
+        BLACK_DEBUG_PRINTK("%s: read proc input error.\n", __func__);
+        return count;
+    }
 
 	snprintf(cancel_str, sizeof(cancel_str), "CANCELED_BL_%s", buffer);
-	delete_timer(cancel_str, true);
+    delete_timer(cancel_str, true);
 
-	return count;
+    return count;
 }
 
-static ssize_t black_screen_cancel_proc_read(struct file *file,
-		char __user *buf,
-		size_t count, loff_t *off)
+static ssize_t black_screen_cancel_proc_read(struct file *file, char __user *buf,
+        size_t count,loff_t *off)
 {
-	return 0;
+    return 0;
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
@@ -240,8 +193,8 @@ struct file_operations black_screen_cancel_proc_fops = {
 
 static void dump_freeze_log(void)
 {
-	/*send kevent dcs msg*/
-	send_black_screen_dcs_msg();
+    //send kevent dcs msg
+    send_black_screen_dcs_msg();
 }
 
 static void black_error_happen_work(struct work_struct *work)
@@ -252,7 +205,7 @@ static void black_error_happen_work(struct work_struct *work)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 	struct timespec64 ts = { 0 };
 	ktime_get_real_ts64(&ts);
-	sprintf(g_black_data.error_id, "%d.%lld.%ld", get_systemserver_pid(), ts.tv_sec, ts.tv_nsec);
+		sprintf(g_black_data.error_id, "%d.%lld.%ld", get_systemserver_pid(), ts.tv_sec, ts.tv_nsec);
 #else
 	struct timespec ts;
 	getnstimeofday(&ts);
@@ -276,15 +229,14 @@ static void black_error_happen_work(struct work_struct *work)
 
 static void black_timer_func(struct timer_list *t)
 {
-	struct black_data *p = from_timer(p, t, timer);
-	BLACK_DEBUG_PRINTK("black_timer_func is called\n");
+    struct black_data *p = from_timer(p, t, timer);
+    BLACK_DEBUG_PRINTK("black_timer_func is called\n");
 
 	if (bl_start_check_systemid == get_systemserver_pid()) {
-		schedule_work(&p->error_happen_work);
-
-	} else {
-		BLACK_DEBUG_PRINTK("black_timer_func, not valid for check, skip\n");
-	}
+        schedule_work(&p->error_happen_work);
+    } else {
+        BLACK_DEBUG_PRINTK("black_timer_func, not valid for check, skip\n");
+    }
 }
 
 static int check_black_screen_tp_event(int *blank, unsigned long event)
@@ -321,7 +273,7 @@ static int black_fb_notifier_callback(struct notifier_block *self,
 }
 #elif IS_ENABLED (CONFIG_DRM_MSM)
 static int black_fb_notifier_callback(struct notifier_block *self,
-				      unsigned long event, void *data)
+                 unsigned long event, void *data)
 {
 	int ret = 0;
 	struct msm_drm_notifier *evdata = data;
@@ -334,7 +286,7 @@ static int black_fb_notifier_callback(struct notifier_block *self,
 }
 #else
 static int black_fb_notifier_callback(struct notifier_block *self,
-				      unsigned long event, void *data)
+                 unsigned long event, void *data)
 {
         int ret = 0;
         struct fb_event *evdata = data;
@@ -360,7 +312,7 @@ void black_screen_check_init(void)
 #elif IS_ENABLED (CONFIG_DRM_MSM)
     msm_drm_register_client(&g_black_data.fb_notif);
 #else
-	fb_register_client(&g_black_data.fb_notif);
+    fb_register_client(&g_black_data.fb_notif);
 #endif
 
 	g_black_data.status = 0;
@@ -373,7 +325,7 @@ void black_screen_check_init(void)
 }
 void black_screen_exit(void)
 {
-	delete_timer("FINISH_DRIVER_EXIT", true);
-	fb_unregister_client(&g_black_data.fb_notif);
+    delete_timer("FINISH_DRIVER_EXIT", true);
+    fb_unregister_client(&g_black_data.fb_notif);
 }
 MODULE_LICENSE("GPL v2");

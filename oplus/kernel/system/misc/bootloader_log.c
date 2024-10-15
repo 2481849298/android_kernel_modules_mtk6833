@@ -31,6 +31,7 @@ struct bootloader_log_platform_data {
 	unsigned long	mem_size;
 	unsigned long	mem_address;
 	unsigned int	mem_type;
+
 };
 
 struct bootloader_log_ram_zone_t {
@@ -38,6 +39,7 @@ struct bootloader_log_ram_zone_t {
 	size_t size;
 	void *vaddr;
 	char *buffer;
+
 } bootloader_log_ram_zone;
 
 static int bootloader_log_proc_show(struct seq_file *m, void *v)
@@ -67,7 +69,7 @@ static int proc_bootloader_log_init(void)
 
 
 static int __init of_bootloader_log_platform_data(struct device_node *node,
-		struct bootloader_log_platform_data *pdata)
+	struct bootloader_log_platform_data *pdata)
 {
 	const u32 *addr;
 	u64 size;
@@ -76,20 +78,16 @@ static int __init of_bootloader_log_platform_data(struct device_node *node,
 	memset(pdata, 0, sizeof(*pdata));
 
 	pnode = of_parse_phandle(node, "linux,contiguous-region", 0);
-
 	if (pnode) {
 		addr = of_get_address(pnode, 0, &size, NULL);
-
 		if (!addr) {
 			pr_err("failed to parse the bootloader log memory address\n");
 			of_node_put(pnode);
 			return -EINVAL;
 		}
-
 		pdata->mem_address = of_read_ulong(addr, 2);
 		pdata->mem_size = (unsigned long) size;
 		of_node_put(pnode);
-
 	} else {
 		pr_err("mem reservation for bootloader log not present\n");
 		return -EINVAL;
@@ -114,17 +112,14 @@ static void *persistent_ram_vmap(phys_addr_t start, size_t size)
 
 
 	pages = kmalloc_array(page_count, sizeof(struct page *), GFP_KERNEL);
-
-	if (!pages) {
+	if (!pages)
 		return NULL;
-	}
 
 	for (i = 0; i < page_count; i++) {
 		phys_addr_t addr = page_start + i * PAGE_SIZE;
 
 		pages[i] = pfn_to_page(addr >> PAGE_SHIFT);
 	}
-
 	vaddr = vmap(pages, page_count, VM_MAP, prot);
 	kfree(pages);
 
@@ -133,7 +128,7 @@ static void *persistent_ram_vmap(phys_addr_t start, size_t size)
 
 
 static int persistent_ram_buffer_map(phys_addr_t start, size_t size,
-				     struct bootloader_log_ram_zone_t *blrz)
+		struct bootloader_log_ram_zone_t *blrz)
 {
 	blrz->paddr = start;
 	blrz->size = size;
@@ -142,7 +137,7 @@ static int persistent_ram_buffer_map(phys_addr_t start, size_t size,
 
 	if (!blrz->vaddr) {
 		pr_err("%s: Failed to map 0x%llx pages at 0x%llx\n", __func__,
-		       (unsigned long long)size, (unsigned long long)start);
+			(unsigned long long)size, (unsigned long long)start);
 		return -ENOMEM;
 	}
 
@@ -163,11 +158,10 @@ static int bootloader_log_probe(struct platform_device *pdev)
 
 	if (pdev->dev.of_node) {
 		if (of_bootloader_log_platform_data(pdev->dev.of_node,
-						    &of_pdata)) {
+			&of_pdata)) {
 			pr_err("Invalid bootloader log device tree data\n");
 			goto fail_out;
 		}
-
 		pdata = &of_pdata;
 	}
 
@@ -180,11 +174,9 @@ static int bootloader_log_probe(struct platform_device *pdev)
 
 
 	err = persistent_ram_buffer_map(paddr, pdata->mem_size,
-					&bootloader_log_ram_zone);
-
-	if (err) {
+		&bootloader_log_ram_zone);
+	if (err)
 		goto fail_out;
-	}
 
 	proc_bootloader_log_init();
 
@@ -229,6 +221,7 @@ postcore_initcall(bootloader_log_init);
 static void __exit bootloader_log_exit(void)
 {
 	platform_driver_unregister(&bootloader_log_driver);
+
 }
 module_exit(bootloader_log_exit);
 

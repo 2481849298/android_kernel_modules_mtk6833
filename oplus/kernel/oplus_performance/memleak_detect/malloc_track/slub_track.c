@@ -578,6 +578,22 @@ static ssize_t kmalloc_debug_create_read(struct file *file,
 	return (len < count ? len : count);
 }
 
+static inline bool check_valid_size(int size)
+{
+	int i;
+	struct kmem_cache *s;
+
+	for(i = 0;i < KMALLOC_SHIFT_HIGH;i++) {
+		s = kmalloc_caches[KMALLOC_NORMAL][i];
+		if (!s)
+			continue;
+		if (size == s->object_size)
+			return true;
+	}
+
+	return false;
+}
+
 static ssize_t kmalloc_debug_create_write(struct file *file, const char __user *buff,
 		size_t len, loff_t *ppos)
 {
@@ -600,6 +616,10 @@ static ssize_t kmalloc_debug_create_write(struct file *file, const char __user *
 	ret = kstrtol(kbuf, 10, &size);
 	if (ret)
 		return -EINVAL;
+	if(!check_valid_size(size)) {
+		pr_err("kbuf %s slab size %ld is error\n", kbuf, size);
+		return -EINVAL;
+	}
 
 	index = kmalloc_index(size);
 	mutex_lock(&debug_mutex);
@@ -978,7 +998,7 @@ int __init create_kmalloc_debug(struct proc_dir_entry *parent)
 #if defined(CONFIG_MEMLEAK_DETECT_THREAD) && defined(CONFIG_SVELTE)
 	mpentry = proc_create("memleak_detect_thread", S_IRUGO|S_IWUGO, parent,
 			&memleak_detect_thread_operations);
-	if (!cpentry) {
+	if (!mpentry) {
 		pr_err("create memleak_detect_thread_operations proc failed.\n");
 		proc_remove(cpentry);
 		proc_remove(upentry);

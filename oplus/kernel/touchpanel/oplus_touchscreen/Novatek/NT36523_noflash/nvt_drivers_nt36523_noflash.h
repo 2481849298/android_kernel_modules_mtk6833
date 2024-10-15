@@ -20,7 +20,7 @@
 #ifdef CONFIG_TOUCHPANEL_MTK_PLATFORM
 #include "mtk_spi.h"
 #else
-#include "oppo_spi.h"
+#include "oplus_spi.h"
 #endif
 
 #define PEN_DATA_CHECKSUM  (1)
@@ -333,7 +333,7 @@ struct chip_data_nt36523 {
     u8 *fw_buf_dma;
     bool need_judge_irq_throw;
     int gesture_state;
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 
     bool lock_point_status;
     bool plug_status;
@@ -343,7 +343,7 @@ struct chip_data_nt36523 {
     bool charger_sta;
     bool noise_sta;
     int water_sta;
-#endif //end of CONFIG_OPPO_TP_APK
+#endif //end of CONFIG_OPLUS_TP_APK
 };
 
 static int nvt_tp = 0;

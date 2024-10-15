@@ -768,7 +768,7 @@ static int32_t nvt_bin_header_parser(struct chip_data_nt36523 *chip_info, const 
                 snprintf(chip_info->bin_map[list].name, 12, "Header");
                 find_bin_header = 1;
             } else {
-                snprintf(chip_info->bin_map[list].name, 12, "Info-%d", (list - chip_info->ilm_dlm_num));
+                snprintf(chip_info->bin_map[list].name, 12, "Info-%u", (list - chip_info->ilm_dlm_num));
             }
         }
 
@@ -784,7 +784,7 @@ static int32_t nvt_bin_header_parser(struct chip_data_nt36523 *chip_info, const 
             chip_info->bin_map[list].size = byte_to_word(&fwdata[pos + 4]);
             chip_info->bin_map[list].BIN_addr = byte_to_word(&fwdata[pos + 8]);
             chip_info->bin_map[list].crc = byte_to_word(&fwdata[pos + 12]);
-            snprintf(chip_info->bin_map[list].name, 12, "Overlay-%d", (list - chip_info->ilm_dlm_num - info_sec_num));
+            snprintf(chip_info->bin_map[list].name, 12, "Overlay-%u", (list - chip_info->ilm_dlm_num - info_sec_num));
         }
 
         /* BIN size error detect */
@@ -1480,7 +1480,7 @@ int32_t nvt_nf_detect_chip(struct chip_data_nt36523 *chip_info)
 }
 
 
-/********* Start of implementation of oppo_touchpanel_operations callbacks********************/
+/********* Start of implementation of oplus_touchpanel_operations callbacks********************/
 //extern int tp_util_get_vendor(struct hw_resource *hw_res, struct panel_info *panel_data);
 
 static int nvt_ftm_process(void *chip_data)
@@ -1642,7 +1642,7 @@ static u32 nvt_trigger_reason(void *chip_data, int gesture_enable, int is_suspen
 		return IRQ_TOUCH;
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static void nova_write_log_buf(struct chip_data_nt36523 *chip_info, u8 main_id, u8 sec_id)
 {
     log_buf_write(chip_info->ts, main_id);
@@ -1734,7 +1734,7 @@ static void nova_debug_info(struct chip_data_nt36523 *chip_info, u8 *buf)
     }
 }
 
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 #if PEN_DATA_CHECKSUM
 static int32_t nvt_ts_pen_data_checksum(uint8_t *buf, uint8_t length)
@@ -1850,11 +1850,11 @@ static int nvt_get_touch_points(void *chip_data, struct point_info *points, int 
         }
     }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
     if (chip_info->debug_mode_sta) {
         nova_debug_info(chip_info, &point_data[109]);
     }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
     return obj_attention;
 }
 
@@ -1863,6 +1863,7 @@ static void nvt_get_pen_points(void *chip_data, struct pen_info *points)
 	struct chip_data_nt36523 *chip_info = (struct chip_data_nt36523 *)chip_data;
 	uint8_t pen_format_id = 0;
 	uint8_t *point_data = chip_info->point_data;
+	static bool btn_no_rejected = false, btn_reject_status = false;
 
 	/* parse and handle pen report */
 	pen_format_id = point_data[66];
@@ -1879,11 +1880,29 @@ static void nvt_get_pen_points(void *chip_data, struct pen_info *points)
 			points->btn2 = (uint32_t)((point_data[77] >> 1) & 0x01);
 			points->battery = (uint32_t)point_data[78];
 			points->status = 1;
-		} else if (pen_format_id == 0xF0) {
-			/* report Pen ID */
+
+			if (!points->z && (points->btn1 || points->btn2)) {
+				btn_no_rejected = true;
+			} else if (!(points->btn1 || points->btn2)) {
+				btn_no_rejected = false;
+				btn_reject_status = false;
+			}
+			if (!btn_no_rejected && points->z && (points->btn1 || points->btn2) && !btn_reject_status) {
+				btn_reject_status = true;
+				TPD_INFO("reject this accident btn(%d %d).\n", points->btn1, points->btn2);
+			}
+			if (btn_reject_status) {
+				points->btn1 = 0;
+				points->btn2 = 0;
+			}
 		} else {
-			TPD_INFO("Unknown pen format id!\n");
+			btn_no_rejected = false;
+			btn_reject_status = false;
+			TPD_INFO("Unknown pen format id(%02x)!\n", pen_format_id);
 		}
+	} else {
+		btn_no_rejected = false;
+		btn_reject_status = false;
 	}
 	return;
 }
@@ -2026,7 +2045,7 @@ static void nvt_ts_wakeup_gesture_coordinate(uint8_t *data, uint8_t max_num)
     }
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 
 static void nvt_read_debug_gesture_coordinate_buffer(struct chip_data_nt36523 *chip_info,
         uint32_t xdata_addr, u8 *xdata, int32_t xdata_len)
@@ -2150,7 +2169,7 @@ static void nvt_dbg_gesture_record_coor_read(struct chip_data_nt36523 *chip_info
         kfree(xdata);
     }
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static int nvt_get_gesture_info(void *chip_data, struct gesture_info *gesture)
 {
@@ -2159,7 +2178,7 @@ static int nvt_get_gesture_info(void *chip_data, struct gesture_info *gesture)
     int ret = -1;
     struct chip_data_nt36523 *chip_info = (struct chip_data_nt36523 *)chip_data;
     uint8_t *point_data = chip_info->point_data;
-    uint8_t max_num = 10;	//TODO: define max_num by oppo common driver
+    uint8_t max_num = 10;	//TODO: define max_num by oplus common driver
 
 #if NVT_PM_WAIT_I2C_SPI_RESUME_COMPLETE
 	if (chip_info->dev_pm_suspend) {
@@ -2180,7 +2199,7 @@ static int nvt_get_gesture_info(void *chip_data, struct gesture_info *gesture)
         return 0;
     }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
     TPD_INFO("gesture id is %d,data[1] %d,data[2] %d,data[3] %d\n",
              gesture_id, point_data[1], point_data[2], point_data[3]);
     if (chip_info->debug_gesture_sta) {
@@ -2188,7 +2207,7 @@ static int nvt_get_gesture_info(void *chip_data, struct gesture_info *gesture)
             nvt_dbg_gesture_record_coor_read(chip_info, gesture_id);
         }
     }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
     if ((gesture_id > 0) && (gesture_id <= max_num)) {
         nvt_ts_wakeup_gesture_coordinate(point_data, max_num);
@@ -2376,20 +2395,20 @@ static int nvt_reset(void *chip_data)
         release_firmware(chip_info->g_fw);
     }
     */
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
     if(chip_info->debug_mode_sta) {
         if(ts->apk_op && ts->apk_op->apk_debug_set) {
             ts->apk_op->apk_debug_set(ts->chip_data, true);
         }
     }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
     chip_info->is_sleep_writed = false;
     mutex_unlock(&chip_info->mutex_testing);
 	return val;
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static __maybe_unused int nvt_enable_debug_gesture_coordinate_record_mode(struct chip_data_nt36523 *chip_info, bool enable)
 {
     int8_t ret = -1;
@@ -2422,7 +2441,7 @@ static __maybe_unused int nvt_enable_debug_gesture_coordinate_mode(struct chip_d
     return ret;
 }
 
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static int nvt_enable_black_gesture(struct chip_data_nt36523 *chip_info, bool enable)
 {
@@ -2445,11 +2464,11 @@ static int nvt_enable_black_gesture(struct chip_data_nt36523 *chip_info, bool en
  //           TPD_INFO("Will power on soon!");
  //           return ret;
  //       }
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
         if (chip_info->debug_gesture_sta) {
             nvt_enable_debug_gesture_coordinate_record_mode(chip_info, true);
         }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
         if ((chip_info->gesture_state & (1 << PENDETECT)) && *chip_info->is_pen_connected && !(*chip_info->is_pen_attracted)) {
             ret = nvt_enable_pen_mode(chip_info, true);
@@ -2574,7 +2593,7 @@ static int nvt_enable_pen_mode(struct chip_data_nt36523 *chip_info, bool enable)
 	return ret;
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static __maybe_unused int nvt_enable_hopping_polling_mode(struct chip_data_nt36523 *chip_info, bool enable)
 {
     int8_t ret = -1;
@@ -2646,7 +2665,7 @@ static __maybe_unused int nvt_enable_water_polling_mode(struct chip_data_nt36523
 
     return ret;
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static int nvt_mode_switch(void *chip_data, work_mode mode, bool flag)
 {
@@ -2717,35 +2736,35 @@ static int nvt_mode_switch(void *chip_data, work_mode mode, bool flag)
         break;
 
     /* Debug Function */
-    /*case MODE_HOPPING_POLLING:	//TODO: add define in oppo h file, MODE_HOPPING_POLLING
+    /*case MODE_HOPPING_POLLING:	//TODO: add define in oplus h file, MODE_HOPPING_POLLING
     	ret = nvt_enable_hopping_polling_mode(chip_info, flag);
     	if (ret < 0) {
     		TPD_INFO("%s: enable hopping polling mode : %d failed\n", __func__, flag);
     	}
     	break;
 
-    case MODE_HOPPING_FIX_FREQ:	//TODO: add define in oppo h file, MODE_HOPPING_FIX_FREQ
+    case MODE_HOPPING_FIX_FREQ:	//TODO: add define in oplus h file, MODE_HOPPING_FIX_FREQ
     	ret = nvt_enable_hopping_fix_freq_mode(chip_info, flag);
     	if (ret < 0) {
     		TPD_INFO("%s: enable hopping fix freq mode : %d failed\n", __func__, flag);
     	}
     	break;*/
 
-    /*case DEBUG_MODE_MESSAGE_DIFF:	//TODO: add define in oppo h file, DEBUG_MODE_MESSAGE_DIFF
+    /*case DEBUG_MODE_MESSAGE_DIFF:	//TODO: add define in oplus h file, DEBUG_MODE_MESSAGE_DIFF
     	ret = nvt_enable_debug_msg_diff_mode(chip_info, flag);
     	if (ret < 0) {
     		TPD_INFO("%s: enable debug message diff %d failed\n", __func__, flag);
     	}
     	break;
 
-    case DEBUG_MODE_GESTURE_COORDINATE:	//TODO: add define in oppo h file, DEBUG_MODE_GESTURE_COORDINATE
+    case DEBUG_MODE_GESTURE_COORDINATE:	//TODO: add define in oplus h file, DEBUG_MODE_GESTURE_COORDINATE
     	ret = nvt_enable_debug_gesture_coordinate_mode(chip_info, flag);
     	if (ret < 0) {
     		TPD_INFO("%s: enable debug gesture coordinate %d failed\n", __func__, flag);
     	}
     	break;
 
-    case DEBUG_MODE_GESTURE_COORDINATE_RECORD:	//TODO: add define in oppo h file, DEBUG_MODE_GESTURE_COORDINATE_RECORD
+    case DEBUG_MODE_GESTURE_COORDINATE_RECORD:	//TODO: add define in oplus h file, DEBUG_MODE_GESTURE_COORDINATE_RECORD
     	ret = nvt_enable_debug_gesture_coordinate_record_mode(chip_info, flag);
     	if (ret < 0) {
     		TPD_INFO("%s: enable debug gesture coordinate record %d failed\n", __func__, flag);
@@ -3089,7 +3108,7 @@ static void nvt_read_get_num_mdata(struct chip_data_nt36523 *chip_info , uint32_
 }
 #endif
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static void nvt_read_debug_mdata(struct chip_data_nt36523 *chip_info,
                                  uint32_t xdata_addr, int32_t *xdata, int32_t xdata_len)
 {
@@ -3171,7 +3190,7 @@ static void nvt_read_debug_mdata(struct chip_data_nt36523 *chip_info,
 
     kfree(xdata_tmp);
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static int32_t nvt_polling_hand_shake_status(struct chip_data_nt36523 *chip_info)
 {
@@ -4280,13 +4299,13 @@ TEST_END:
     if (!err_cnt) {
         snprintf(all_test_result, 8, "PASS");
         snprintf(data_buf, 128, "/sdcard/TpTestReport/screenOff/OK/tp_testlimit_%s_%02d%02d%02d-%02d%02d%02d-utc.csv",
-                 all_test_result,
+                 (char *)all_test_result,
                  (rtc_now_time.tm_year + 1900) % 100, rtc_now_time.tm_mon + 1, rtc_now_time.tm_mday,
                  rtc_now_time.tm_hour, rtc_now_time.tm_min, rtc_now_time.tm_sec);
     } else {
         snprintf(all_test_result, 8, "FAIL");
         snprintf(data_buf, 128, "/sdcard/TpTestReport/screenOff/NG/tp_testlimit_%s_%02d%02d%02d-%02d%02d%02d-utc.csv",
-                 all_test_result,
+                 (char *)all_test_result,
                  (rtc_now_time.tm_year + 1900) % 100, rtc_now_time.tm_mon + 1, rtc_now_time.tm_mday,
                  rtc_now_time.tm_hour, rtc_now_time.tm_min, rtc_now_time.tm_sec);
     }
@@ -4310,7 +4329,7 @@ TEST_END:
     }
 
     /* Project Name */
-    store_to_file(fd, "OPPO_%d\n", 19131);
+    store_to_file(fd, "OPLUS_%d\n", 19131);
     /* Project ID */
     store_to_file(fd, "NVTPID= %04X\n", chip_info->nvt_pid);
     /* FW Version */
@@ -4506,6 +4525,7 @@ static void nvt_data_read(struct seq_file *s, struct chip_data_nt36523 *chip_inf
         TPD_INFO("%s, malloc memory failed\n", __func__);
         return;
     }
+    memset(xdata, 0, buf_len);
 
     pipe = nvt_get_fw_pipe_noflash(chip_info);
     TPD_INFO("nvt_get_fw_pipe:%d\n", pipe);
@@ -4548,7 +4568,7 @@ static void nvt_data_read(struct seq_file *s, struct chip_data_nt36523 *chip_inf
     kfree(xdata);
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static void nvt_debug_data_read(struct seq_file *s, struct chip_data_nt36523 *chip_info, DEBUG_READ_TYPE read_type)
 {
     int ret = -1;
@@ -4596,7 +4616,7 @@ static void nvt_debug_data_read(struct seq_file *s, struct chip_data_nt36523 *ch
 
     kfree(xdata);
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static void nvt_delta_read(struct seq_file *s, void *chip_data)
 {
@@ -4606,11 +4626,11 @@ static void nvt_delta_read(struct seq_file *s, void *chip_data)
 
     nvt_data_read(s, chip_info, NVT_DIFFDATA);
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
     if (chip_info->debug_mode_sta) {
         nvt_debug_data_read(s, chip_info, NVT_DEBUG_FINGER_DOWN_DIFFDATA);
     }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 }
 
 static void nvt_baseline_read(struct seq_file *s, void *chip_data)
@@ -4623,7 +4643,7 @@ static void nvt_baseline_read(struct seq_file *s, void *chip_data)
     nvt_data_read(s, chip_info, NVT_RAWDATA);
 }
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 static __maybe_unused void nvt_dbg_diff_finger_down_read(struct seq_file *s, void *chip_data)
 {
     struct chip_data_nt36523 *chip_info = (struct chip_data_nt36523 *)chip_data;
@@ -4637,7 +4657,7 @@ static __maybe_unused void nvt_dbg_diff_status_change_read(struct seq_file *s, v
 
     nvt_debug_data_read(s, chip_info, NVT_DEBUG_STATUS_CHANGE_DIFFDATA);
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 static void nvt_read_fw_history(struct seq_file *s, void *chip_data, uint32_t NVT_MMAP_HISTORY_ADDR)
 {
@@ -4706,9 +4726,9 @@ static struct debug_info_proc_operations debug_info_proc_ops = {
     .limit_read    = nvt_limit_read,
     .baseline_read = nvt_baseline_read,
     .delta_read = nvt_delta_read,
-    //.dbg_diff_finger_down_read = nvt_dbg_diff_finger_down_read, //TODO: link to oppo common driver
-    //.dbg_diff_status_change_read = nvt_dbg_diff_status_change_read, //TODO: link to oppo common driver
-    //.dbg_gesture_record_coor_read = nvt_dbg_gesture_record_coor_read, //TODO: link to oppo common driver
+    //.dbg_diff_finger_down_read = nvt_dbg_diff_finger_down_read, //TODO: link to oplus common driver
+    //.dbg_diff_status_change_read = nvt_dbg_diff_status_change_read, //TODO: link to oplus common driver
+    //.dbg_gesture_record_coor_read = nvt_dbg_gesture_record_coor_read, //TODO: link to oplus common driver
     .main_register_read = nvt_main_register_read,
 };
 
@@ -5939,13 +5959,13 @@ TEST_END:
     if (!err_cnt) {
         snprintf(all_test_result, 8, "PASS");
         snprintf(data_buf, 128, "/sdcard/TpTestReport/screenOn/OK/tp_testlimit_%s_%02d%02d%02d-%02d%02d%02d-utc.csv",
-                 all_test_result,
+                 (char *)all_test_result,
                  (rtc_now_time.tm_year + 1900) % 100, rtc_now_time.tm_mon + 1, rtc_now_time.tm_mday,
                  rtc_now_time.tm_hour, rtc_now_time.tm_min, rtc_now_time.tm_sec);
     } else {
         snprintf(all_test_result, 8, "FAIL");
         snprintf(data_buf, 128, "/sdcard/TpTestReport/screenOn/NG/tp_testlimit_%s_%02d%02d%02d-%02d%02d%02d-utc.csv",
-                 all_test_result,
+                 (char *)all_test_result,
                  (rtc_now_time.tm_year + 1900) % 100, rtc_now_time.tm_mon + 1, rtc_now_time.tm_mday,
                  rtc_now_time.tm_hour, rtc_now_time.tm_min, rtc_now_time.tm_sec);
     }
@@ -5973,7 +5993,7 @@ TEST_END:
     }
 
     /* Project Name */
-    store_to_file(nvt_testdata->fd, "OPPO_%d\n", 19131);
+    store_to_file(nvt_testdata->fd, "OPLUS_%d\n", 19131);
     /* Project ID */
     store_to_file(nvt_testdata->fd, "NVTPID= %04X\n", chip_info->nvt_pid);
     /* FW Version */
@@ -6248,7 +6268,7 @@ static struct nvt_proc_operations nvt_proc_ops = {
     .auto_test     = nvt_auto_test,
 };
 
-#ifdef CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
 
 static void nova_apk_game_set(void *chip_data, bool on_off)
 {
@@ -6509,7 +6529,7 @@ static int  nova_apk_tp_info_get(void *chip_data, char *buf, int len)
     return ret;
 }
 
-static void nova_init_oppo_apk_op(struct touchpanel_data *ts)
+static void nova_init_oplus_apk_op(struct touchpanel_data *ts)
 {
     ts->apk_op = kzalloc(sizeof(APK_OPERATION), GFP_KERNEL);
     if(ts->apk_op) {
@@ -6542,7 +6562,7 @@ static void nova_init_oppo_apk_op(struct touchpanel_data *ts)
         TPD_INFO("Can not kzalloc apk op.\n");
     }
 }
-#endif // end of CONFIG_OPPO_TP_APK
+#endif // end of CONFIG_OPLUS_TP_APK
 
 
 /*********** Start of SPI Driver and Implementation of it's callbacks*************************/
@@ -6675,9 +6695,9 @@ static int nvt_tp_probe(struct spi_device *client)
     nvt_create_proc(ts, &nvt_proc_ops);
 
     chip_info->ts = ts;
-#ifdef CONFIG_OPPO_TP_APK
-    nova_init_oppo_apk_op(ts);
-#endif // end of CONFIG_OPPO_TP_APK
+#ifdef CONFIG_OPLUS_TP_APK
+    nova_init_oplus_apk_op(ts);
+#endif // end of CONFIG_OPLUS_TP_APK
 
     //if (chip_info->cs_gpio_need_pull) {
         //nvt_cs_gpio_control(chip_info,true);
@@ -6769,7 +6789,7 @@ static int nvt_spi_resume(struct device *dev)
 static const struct spi_device_id tp_id[] =
 {
 #ifdef CONFIG_TOUCHPANEL_MULTI_NOFLASH
-    { "oppo,tp_noflash", 0 },
+	{ "oplus,tp_noflash", 0 },
 #else
     {TPD_DEVICE, 0},
 #endif
@@ -6779,7 +6799,7 @@ static const struct spi_device_id tp_id[] =
 static struct of_device_id tp_match_table[] =
 {
 #ifdef CONFIG_TOUCHPANEL_MULTI_NOFLASH
-    { .compatible = "oppo,tp_noflash",},
+	{ .compatible = "oplus,tp_noflash", 0 },
 #else
     { .compatible = TPD_DEVICE},
 #endif

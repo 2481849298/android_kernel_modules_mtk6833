@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
 /*
  *
- * (C) COPYRIGHT 2010-2021 ARM Limited. All rights reserved.
+ * (C) COPYRIGHT 2010-2023 ARM Limited. All rights reserved.
  *
  * This program is free software and is provided to you under the terms of the
  * GNU General Public License version 2 as published by the Free Software
@@ -58,7 +58,8 @@
 
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
 #include <mtk_gpufreq.h>
-#include "platform/mtk_platform_common.h"
+#include <mali_kbase_hwaccess_time.h>
+#include <platform/mtk_platform_common.h>
 #include <ged_dcs.h>
 #include <ged_log.h>
 #if IS_ENABLED(CONFIG_MTK_IRQ_DBG)
@@ -273,7 +274,7 @@ static void mali_cci_flush_l2(struct kbase_device *kbdev)
 
 	kbase_reg_write(kbdev,
 			GPU_CONTROL_REG(GPU_COMMAND),
-			GPU_COMMAND_CLEAN_INV_CACHES);
+			GPU_COMMAND_CACHE_CLN_INV_L2);
 
 	raw = kbase_reg_read(kbdev,
 		GPU_CONTROL_REG(GPU_IRQ_RAWSTAT));
@@ -877,6 +878,23 @@ static bool can_power_down_l2(struct kbase_device *kbdev)
 #endif
 }
 
+#if !MALI_USE_CSF
+/* On powering on the L2, the tracked kctx becomes stale and can be cleared.
+ * This enables the backend to spare the START_FLUSH.INV_SHADER_OTHER
+ * operation on the first submitted katom after the L2 powering on.
+ */
+static void kbase_pm_l2_clear_backend_slot_submit_kctx(struct kbase_device *kbdev)
+{
+	int js;
+
+	lockdep_assert_held(&kbdev->hwaccess_lock);
+
+	/* Clear the slots' last katom submission kctx */
+	for (js = 0; js < kbdev->gpu_props.num_job_slots; js++)
+		kbdev->hwaccess.backend.slot_rb[js].last_kctx_tagged = SLOT_RB_NULL_TAG_VAL;
+}
+#endif
+
 static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 {
 	struct kbase_pm_backend_data *backend = &kbdev->pm.backend;
@@ -950,6 +968,8 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 					kbase_pm_invoke(kbdev, KBASE_PM_CORE_L2,
 							l2_present & ~1,
 							ACTION_PWRON);
+				/* Clear backend slot submission kctx */
+				kbase_pm_l2_clear_backend_slot_submit_kctx(kbdev);
 #else
 				/* With CSF firmware, Host driver doesn't need to
 				 * handle power management with both shader and tiler cores.
@@ -1154,7 +1174,7 @@ static int kbase_pm_l2_update_state(struct kbase_device *kbdev)
 					 * powered off.
 					 */
 					kbase_gpu_start_cache_clean_nolock(
-							kbdev);
+							kbdev, GPU_COMMAND_CACHE_CLN_INV_L2);
 #if !MALI_USE_CSF
 				KBASE_KTRACE_ADD(kbdev, PM_CORES_CHANGE_AVAILABLE_TILER, NULL, 0u);
 #else
@@ -1535,7 +1555,8 @@ static int kbase_pm_shaders_update_state(struct kbase_device *kbdev)
 			shader_poweroff_timer_queue_cancel(kbdev);
 
 			if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_TTRX_921)) {
-				kbase_gpu_start_cache_clean_nolock(kbdev);
+				kbase_gpu_start_cache_clean_nolock(
+						kbdev, GPU_COMMAND_CACHE_CLN_INV_L2);
 				backend->shaders_state =
 					KBASE_SHADERS_L2_FLUSHING_CORESTACK_ON;
 			} else {
@@ -1960,6 +1981,17 @@ static void kbase_pm_timed_out(struct kbase_device *kbdev)
 			kbase_reg_read(kbdev, GPU_CONTROL_REG(
 					L2_PWRTRANS_LO)));
 
+#if MALI_USE_CSF
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+	ged_log_buf_print2(
+		kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+		"Power transition timed out (%d ms) unexpectedly, MCU sw state = %d (%s)\n",
+		PM_TIMEOUT_MS,
+		kbdev->pm.backend.mcu_state,
+		kbase_mcu_state_to_string(kbdev->pm.backend.mcu_state));
+#endif
+#endif
+
 	dev_err(kbdev->dev, "Sending reset to GPU - all running jobs will be lost\n");
 	if (kbase_prepare_to_reset_gpu(kbdev,
 				       RESET_FLAGS_HWC_UNRECOVERABLE_ERROR))
@@ -2149,18 +2181,35 @@ void kbase_pm_disable_interrupts(struct kbase_device *kbdev)
 KBASE_EXPORT_TEST_API(kbase_pm_disable_interrupts);
 
 #if MALI_USE_CSF
+/**
+ * update_user_reg_page_mapping - Update the mapping for USER Register page
+ *
+ * @kbdev: The kbase device structure for the device.
+ *
+ * This function must be called to unmap the dummy or real page from USER Register page
+ * mapping whenever GPU is powered up or down. The dummy or real page would get
+ * appropriately mapped in when Userspace reads the LATEST_FLUSH value.
+ */
 static void update_user_reg_page_mapping(struct kbase_device *kbdev)
 {
+	struct kbase_context *kctx, *n;
+
 	lockdep_assert_held(&kbdev->pm.lock);
 
 	mutex_lock(&kbdev->csf.reg_lock);
-	if (kbdev->csf.mali_file_inode) {
-		/* This would zap the pte corresponding to the mapping of User
-		 * register page for all the Kbase contexts.
+	list_for_each_entry_safe(kctx, n, &kbdev->csf.user_reg.list,
+				 csf.user_reg.link) {
+		/* This would zap the PTE corresponding to the mapping of User
+		 * Register page of the kbase context. The mapping will be reestablished
+		 * when the context (user process) needs to access to the page.
 		 */
-		unmap_mapping_range(kbdev->csf.mali_file_inode->i_mapping,
-				    BASEP_MEM_CSF_USER_REG_PAGE_HANDLE,
-				    PAGE_SIZE, 1);
+		unmap_mapping_range(
+			kbdev->csf.user_reg.filp->f_inode->i_mapping,
+			kctx->csf.user_reg.file_offset << PAGE_SHIFT, PAGE_SIZE, 1);
+		list_del_init(&kctx->csf.user_reg.link);
+		dev_dbg(kbdev->dev,
+			"Updated USER Reg page mapping of ctx %d_%d",
+			kctx->tgid, kctx->id);
 	}
 	mutex_unlock(&kbdev->csf.reg_lock);
 }
@@ -2678,12 +2727,31 @@ static int kbase_pm_do_reset(struct kbase_device *kbdev)
 	/* Wait for the RESET_COMPLETED interrupt to be raised */
 	kbase_pm_wait_for_reset(kbdev);
 
+#if IS_ENABLED(CONFIG_MALI_MTK_TIMEOUT_RESET)
+	if (!kbdev->reset_force_hard_reset) {
+#endif
 	if (!rtdata.timed_out) {
 		/* GPU has been reset */
 		hrtimer_cancel(&rtdata.timer);
 		destroy_hrtimer_on_stack(&rtdata.timer);
+		dev_info(kbdev->dev, "GPU soft reset completed");
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"GPU soft reset completed\n");
+#endif
 		return 0;
 	}
+#if IS_ENABLED(CONFIG_MALI_MTK_TIMEOUT_RESET)
+	} else {
+		dev_info(kbdev->dev, "No need to check if GPU soft reset is completed");
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"No need to check if GPU soft reset is completed\n");
+#endif
+	}
+#endif
 
 	/* No interrupt has been received - check if the RAWSTAT register says
 	 * the reset has completed
@@ -2695,6 +2763,9 @@ static int kbase_pm_do_reset(struct kbase_device *kbdev)
 		 */
 		dev_err(kbdev->dev, "Reset interrupt didn't reach CPU. Check interrupt assignments.\n");
 #if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"Reset interrupt didn't reach CPU. Check interrupt assignments\n");
 		dev_info(kbdev->dev, "GPU_IRQ_RAWSTAT=0x%08x GPU_IRQ_MASK=0x%08x GPU_IRQ_STATUS=0x%08x\n",
 						kbase_reg_read(kbdev, GPU_CONTROL_REG(GPU_IRQ_RAWSTAT)),
 						kbase_reg_read(kbdev, GPU_CONTROL_REG(GPU_IRQ_MASK)),
@@ -2733,6 +2804,12 @@ static int kbase_pm_do_reset(struct kbase_device *kbdev)
 #endif /* CONFIG_MALI_ARBITER_SUPPORT */
 		dev_err(kbdev->dev, "Failed to soft-reset GPU (timed out after %d ms), now attempting a hard reset\n",
 					RESET_TIMEOUT);
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"Failed to soft-reset GPU (timed out after %d ms), now attempting a hard reset\n",
+			RESET_TIMEOUT);
+#endif
 		KBASE_KTRACE_ADD(kbdev, CORE_GPU_HARD_RESET, NULL, 0);
 		kbase_reg_write(kbdev, GPU_CONTROL_REG(GPU_COMMAND),
 					GPU_COMMAND_HARD_RESET);
@@ -2746,10 +2823,22 @@ static int kbase_pm_do_reset(struct kbase_device *kbdev)
 		/* Wait for the RESET_COMPLETED interrupt to be raised */
 		kbase_pm_wait_for_reset(kbdev);
 
+#if IS_ENABLED(CONFIG_MALI_MTK_TIMEOUT_RESET)
+		spin_lock(&kbdev->reset_force_change);
+		kbdev->reset_force_hard_reset = false;
+		spin_unlock(&kbdev->reset_force_change);
+#endif
+
 		if (!rtdata.timed_out) {
 			/* GPU has been reset */
 			hrtimer_cancel(&rtdata.timer);
 			destroy_hrtimer_on_stack(&rtdata.timer);
+			dev_info(kbdev->dev, "GPU hard reset completed");
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+			ged_log_buf_print2(
+				kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+				"GPU hard reset completed\n");
+#endif
 			return 0;
 		}
 
@@ -2757,6 +2846,12 @@ static int kbase_pm_do_reset(struct kbase_device *kbdev)
 
 		dev_err(kbdev->dev, "Failed to hard-reset the GPU (timed out after %d ms)\n",
 					RESET_TIMEOUT);
+#if IS_ENABLED(CONFIG_MALI_MTK_DEBUG)
+		ged_log_buf_print2(
+			kbdev->ged_log_buf_hnd_kbase, GED_LOG_ATTR_TIME,
+			"Failed to hard-reset the GPU (timed out after %d ms)\n",
+			RESET_TIMEOUT);
+#endif
 #ifdef CONFIG_MALI_ARBITER_SUPPORT
 	}
 #endif /* CONFIG_MALI_ARBITER_SUPPORT */
@@ -3019,7 +3114,8 @@ static int power_up_required_cores(struct kbase_device *kbdev)
 	int err = 0;
 
 	if (cores_required) {
-		const unsigned int max_iterations = 100;
+	//	const unsigned int max_iterations = 100;
+		const unsigned int max_iterations = 10000;
 		unsigned int i;
 
 		kbase_pm_invoke(kbdev, KBASE_PM_CORE_SHADER, cores_required,

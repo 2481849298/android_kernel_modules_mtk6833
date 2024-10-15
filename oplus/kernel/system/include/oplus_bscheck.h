@@ -8,4 +8,5 @@
 
 int black_screen_timer_restart(void);
 
-#endif /*_OPLUS_BS_CHECK_H_*/
+#endif
+
