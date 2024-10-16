@@ -30,25 +30,16 @@
 #include <uapi/linux/sched/types.h>
 #include <linux/uaccess.h>
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
-#include "tcpm.h"
-#include "mtk_direct_charge_vdm.h"
+
+#include "../../../drivers/misc/mediatek/typec/tcpc/inc/tcpm.h"
+#include "../../../drivers/misc/mediatek/typec/tcpc/inc/mtk_direct_charge_vdm.h"
 struct charger_manager;
-#include "mtk_pe_intf.h"
-#include "mtk_pe20_intf.h"
-#include "mtk_pdc_intf.h"
-#include "mtk_charger_init.h"
-#include "mtk_charger_intf.h"
-#else
-#include "tcpm.h"
-#include "mtk_direct_charge_vdm.h"
-struct charger_manager;
-#include "mtk_pe_intf.h"
-#include "mtk_pe20_intf.h"
-#include "mtk_pdc_intf.h"
-#include "mtk_charger_init.h"
-#include "mtk_charger_intf.h"
-#endif
+#include "../../../drivers/power/supply/mediatek/charger/mtk_pe_intf.h"
+#include "../../../drivers/power/supply/mediatek/charger/mtk_pe20_intf.h"
+#include "../../../drivers/power/supply/mediatek/charger/mtk_pdc_intf.h"
+#include "../../../drivers/power/supply/mediatek/charger/mtk_charger_init.h"
+#include "../../../drivers/power/supply/mediatek/charger/mtk_charger_intf.h"
+
 
 
 typedef enum {
